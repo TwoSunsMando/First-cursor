@@ -1,0 +1,37 @@
+{
+  "name": "rh-chain-paper-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Robinhood Chain meme signal bot — paper trade first, live swaps behind caps + approval",
+  "type": "module",
+  "bin": {
+    "rhbot": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.ts",
+    "scan": "tsx src/cli.ts scan",
+    "status": "tsx src/cli.ts status",
+    "report": "tsx src/cli.ts report",
+    "positions": "tsx src/cli.ts positions",
+    "approve": "tsx src/cli.ts approve",
+    "pending": "tsx src/cli.ts pending",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx src/smoke.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "viem": "^2.23.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
