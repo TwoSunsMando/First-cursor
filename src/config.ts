@@ -19,7 +19,7 @@ const ConfigSchema = z
     PAPER_STARTING_EQUITY_ETH: z.coerce.number().positive().default(1.0),
     TAKE_PROFIT_PERCENT: z.coerce.number().positive().default(65),
     STOP_LOSS_PERCENT: z.coerce.number().positive().default(15),
-    MAX_HOLD_MINUTES: z.coerce.number().int().positive().default(180),
+    MAX_HOLD_MINUTES: z.coerce.number().int().positive().default(45),
     MIN_INITIAL_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.05),
     MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(5),
     DENY_NAME_SUBSTRINGS: z.string().default("scam,honeypot,test"),
