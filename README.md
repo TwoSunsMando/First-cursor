@@ -58,8 +58,8 @@ Tune with `TRENDING_MIN_VOLUME_USD_24H`, `TRENDING_MIN_LIQUIDITY_USD`, and `TREN
 
 Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool discovery:
 
-- Base bonus: trending +10 / boost +12 (not +25/+30)
-- Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.4**)
+- Base bonus: trending +14 / boost +16 (not +25/+30)
+- Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.55**)
 - At most `MAX_TRENDING_OPEN_POSITIONS` (default **2**) of your open slots may be trending/boost
 
 ### Re-entry guard (stop-loss churn)

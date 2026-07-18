@@ -32,7 +32,7 @@ export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
 };
 
 export const DEFAULT_SCORE_WEIGHTS: ScoreWeights = {
-  trendingMomentumScale: 0.4,
+  trendingMomentumScale: 0.55,
 };
 
 function isTrendingSource(source: string): boolean {
@@ -61,11 +61,11 @@ export function scoreCandidate(
     score += 35;
     reasons.push("NOXA launch (+35)");
   } else if (candidate.source === "boost") {
-    score += 12;
-    reasons.push("recent boost (+12)");
+    score += 16;
+    reasons.push("recent boost (+16)");
   } else if (candidate.source === "trending") {
-    score += 10;
-    reasons.push("trending list (+10)");
+    score += 14;
+    reasons.push("trending list (+14)");
   } else if (candidate.dex === "v3") {
     score += 20;
     reasons.push("Uniswap V3 pool (+20)");
@@ -76,17 +76,17 @@ export function scoreCandidate(
 
   const liq = candidate.initialLiquidityEth ?? 0;
   if (liq >= 1) {
-    const liqPts = trending ? 12 : 25; // cap mega-liquid trending majors
+    const liqPts = trending ? 18 : 25; // soft cap for mega-liquid trending majors
     score += liqPts;
     reasons.push(
       `liquidity ${liq.toFixed(3)} ETH (+${liqPts}${trending ? " trending-capped" : ""})`,
     );
   } else if (liq >= 0.25) {
-    const liqPts = trending ? 8 : 15;
+    const liqPts = trending ? 10 : 15;
     score += liqPts;
     reasons.push(`liquidity ${liq.toFixed(3)} ETH (+${liqPts})`);
   } else if (liq >= 0.05) {
-    const liqPts = trending ? 4 : 8;
+    const liqPts = trending ? 6 : 8;
     score += liqPts;
     reasons.push(`liquidity ${liq.toFixed(3)} ETH (+${liqPts})`);
   } else if (liq > 0) {
@@ -97,11 +97,9 @@ export function scoreCandidate(
   }
 
   const addMom = (pts: number, label: string) => {
-    const scaled = Math.round(pts * momScale);
-    if (scaled === 0 && pts > 0) {
-      reasons.push(`${label} (scaled→0 @${momScale})`);
-      return;
-    }
+    // ceil for positive momentum so ×0.55 doesn't crush mid-tier signals to noise
+    let scaled = trending ? Math.ceil(pts * momScale) : pts;
+    if (pts > 0 && scaled < 1) scaled = 1;
     score += scaled;
     if (trending && scaled !== pts) {
       reasons.push(`${label} → +${scaled} (×${momScale})`);

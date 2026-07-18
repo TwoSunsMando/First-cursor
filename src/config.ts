@@ -51,7 +51,7 @@ const ConfigSchema = z
      * Scale volume/buys/Δ points for trending|boost sources (0–1).
      * Keeps trending as a signal without letting it monopolize paper slots.
      */
-    TRENDING_MOMENTUM_SCALE: z.coerce.number().min(0).max(1).default(0.4),
+    TRENDING_MOMENTUM_SCALE: z.coerce.number().min(0).max(1).default(0.55),
     /** Max open positions that originated from trending/boost (rest reserved for new pools). */
     MAX_TRENDING_OPEN_POSITIONS: z.coerce.number().int().nonnegative().default(2),
     /**
