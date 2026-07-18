@@ -21,32 +21,51 @@ export interface ScoreExtras {
   txns24h?: number;
 }
 
+export interface ScoreWeights {
+  /** Scale for volume/buys/Δ/24h-vol when source is trending or boost (0–1). */
+  trendingMomentumScale: number;
+}
+
 export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
   buy: 45,
   watch: 35,
 };
 
+export const DEFAULT_SCORE_WEIGHTS: ScoreWeights = {
+  trendingMomentumScale: 0.4,
+};
+
+function isTrendingSource(source: string): boolean {
+  return source === "trending" || source === "boost";
+}
+
 /**
  * Heuristic scorer.
- * Weights: source, liquidity, 15m volume, buyers, and short-window boosts.
+ * Trending/boost get a modest base bonus; momentum extras are scaled down
+ * so new-pool launches can still compete for paper slots.
  */
 export function scoreCandidate(
   candidate: CandidateToken,
   extras: ScoreExtras = {},
   thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
+  weights: ScoreWeights = DEFAULT_SCORE_WEIGHTS,
 ): ScoredSignal {
   const reasons: string[] = [];
   let score = 0;
+  const trending = isTrendingSource(candidate.source);
+  const momScale = trending
+    ? Math.max(0, Math.min(1, weights.trendingMomentumScale))
+    : 1;
 
   if (candidate.source === "noxa") {
     score += 35;
     reasons.push("NOXA launch (+35)");
   } else if (candidate.source === "boost") {
-    score += 30;
-    reasons.push("recent boost (+30)");
+    score += 12;
+    reasons.push("recent boost (+12)");
   } else if (candidate.source === "trending") {
-    score += 25;
-    reasons.push("trending list (+25)");
+    score += 10;
+    reasons.push("trending list (+10)");
   } else if (candidate.dex === "v3") {
     score += 20;
     reasons.push("Uniswap V3 pool (+20)");
@@ -57,14 +76,19 @@ export function scoreCandidate(
 
   const liq = candidate.initialLiquidityEth ?? 0;
   if (liq >= 1) {
-    score += 25;
-    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+25)`);
+    const liqPts = trending ? 12 : 25; // cap mega-liquid trending majors
+    score += liqPts;
+    reasons.push(
+      `liquidity ${liq.toFixed(3)} ETH (+${liqPts}${trending ? " trending-capped" : ""})`,
+    );
   } else if (liq >= 0.25) {
-    score += 15;
-    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+15)`);
+    const liqPts = trending ? 8 : 15;
+    score += liqPts;
+    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+${liqPts})`);
   } else if (liq >= 0.05) {
-    score += 8;
-    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+8)`);
+    const liqPts = trending ? 4 : 8;
+    score += liqPts;
+    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+${liqPts})`);
   } else if (liq > 0) {
     score += 2;
     reasons.push(`thin liquidity ${liq.toFixed(4)} ETH (+2)`);
@@ -72,49 +96,44 @@ export function scoreCandidate(
     reasons.push("liquidity unknown (0)");
   }
 
+  const addMom = (pts: number, label: string) => {
+    const scaled = Math.round(pts * momScale);
+    if (scaled === 0 && pts > 0) {
+      reasons.push(`${label} (scaled→0 @${momScale})`);
+      return;
+    }
+    score += scaled;
+    if (trending && scaled !== pts) {
+      reasons.push(`${label} → +${scaled} (×${momScale})`);
+    } else {
+      reasons.push(`${label} (+${scaled})`);
+    }
+  };
+
   const vol = extras.volumeEth15m ?? 0;
-  if (vol >= 5) {
-    score += 25;
-    reasons.push(`15m vol ${vol.toFixed(2)} ETH (+25)`);
-  } else if (vol >= 1) {
-    score += 15;
-    reasons.push(`15m vol ${vol.toFixed(2)} ETH (+15)`);
-  } else if (vol >= 0.2) {
-    score += 8;
-    reasons.push(`15m vol ${vol.toFixed(2)} ETH (+8)`);
-  }
+  if (vol >= 5) addMom(25, `15m vol ${vol.toFixed(2)} ETH`);
+  else if (vol >= 1) addMom(15, `15m vol ${vol.toFixed(2)} ETH`);
+  else if (vol >= 0.2) addMom(8, `15m vol ${vol.toFixed(2)} ETH`);
 
   const buyers = extras.uniqueBuyers ?? 0;
-  if (buyers >= 20) {
-    score += 15;
-    reasons.push(`buys ${buyers} (+15)`);
-  } else if (buyers >= 5) {
-    score += 8;
-    reasons.push(`buys ${buyers} (+8)`);
-  }
+  if (buyers >= 20) addMom(15, `buys ${buyers}`);
+  else if (buyers >= 5) addMom(8, `buys ${buyers}`);
 
   const chg15 = extras.priceChange15mPct;
   if (chg15 != null && Number.isFinite(chg15)) {
-    if (chg15 >= 25) {
-      score += 12;
-      reasons.push(`15m Δ +${chg15.toFixed(1)}% (+12)`);
-    } else if (chg15 >= 10) {
-      score += 6;
-      reasons.push(`15m Δ +${chg15.toFixed(1)}% (+6)`);
-    } else if (chg15 <= -40) {
-      score -= 8;
-      reasons.push(`15m Δ ${chg15.toFixed(1)}% (-8 dump)`);
+    if (chg15 >= 25) addMom(12, `15m Δ +${chg15.toFixed(1)}%`);
+    else if (chg15 >= 10) addMom(6, `15m Δ +${chg15.toFixed(1)}%`);
+    else if (chg15 <= -25) {
+      // Dumps: full penalty even for trending (don't scale down risk)
+      const pen = chg15 <= -40 ? -12 : -8;
+      score += pen;
+      reasons.push(`15m Δ ${chg15.toFixed(1)}% (${pen} dump)`);
     }
   }
 
   const vol24 = extras.volumeUsd24h ?? 0;
-  if (vol24 >= 1_000_000) {
-    score += 8;
-    reasons.push(`24h vol $${(vol24 / 1e6).toFixed(2)}M (+8)`);
-  } else if (vol24 >= 100_000) {
-    score += 4;
-    reasons.push(`24h vol $${(vol24 / 1e3).toFixed(0)}k (+4)`);
-  }
+  if (vol24 >= 1_000_000) addMom(8, `24h vol $${(vol24 / 1e6).toFixed(2)}M`);
+  else if (vol24 >= 100_000) addMom(4, `24h vol $${(vol24 / 1e3).toFixed(0)}k`);
 
   let action: SignalAction = "SKIP";
   if (score >= thresholds.buy) action = "BUY";

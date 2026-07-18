@@ -47,10 +47,15 @@ export async function handleCandidate(
   extras: ScoreExtras = {},
 ): Promise<void> {
   const mode = config.EXECUTION_MODE;
-  const scored = scoreCandidate(candidate, extras, {
-    buy: config.BUY_SCORE_THRESHOLD,
-    watch: config.WATCH_SCORE_THRESHOLD,
-  });
+  const scored = scoreCandidate(
+    candidate,
+    extras,
+    {
+      buy: config.BUY_SCORE_THRESHOLD,
+      watch: config.WATCH_SCORE_THRESHOLD,
+    },
+    { trendingMomentumScale: config.TRENDING_MOMENTUM_SCALE },
+  );
   const reasons = [...scored.reasons];
   let finalScore = scored.score;
 
@@ -73,6 +78,21 @@ export async function handleCandidate(
   if (!risk.ok) {
     action = "SKIP";
     reasons.push(...risk.reasons.map((r) => `risk: ${r}`));
+  }
+
+  // Reserve most paper slots for new-pool discovery; trending is a spice, not the meal.
+  const isTrendingSrc =
+    candidate.source === "trending" || candidate.source === "boost";
+  if (
+    action === "BUY" &&
+    isTrendingSrc &&
+    config.MAX_TRENDING_OPEN_POSITIONS >= 0 &&
+    db.countOpenTrendingPositions(mode) >= config.MAX_TRENDING_OPEN_POSITIONS
+  ) {
+    action = "WATCH";
+    reasons.push(
+      `risk: trending open-slot cap (${config.MAX_TRENDING_OPEN_POSITIONS}) — demoted to WATCH`,
+    );
   }
   reasons.push(
     `final score=${finalScore} → ${action} (buy≥${config.BUY_SCORE_THRESHOLD}, watch≥${config.WATCH_SCORE_THRESHOLD})`,

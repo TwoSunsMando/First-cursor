@@ -61,6 +61,9 @@ async function cmdScan() {
   console.log(
     `thresholds: BUY≥${config.BUY_SCORE_THRESHOLD} WATCH≥${config.WATCH_SCORE_THRESHOLD} minLiq=${config.MIN_INITIAL_LIQUIDITY_ETH} ETH`,
   );
+  console.log(
+    `trending weights: momentum×${config.TRENDING_MOMENTUM_SCALE} maxOpen=${config.MAX_TRENDING_OPEN_POSITIONS}/${config.MAX_OPEN_POSITIONS}`,
+  );
   if (config.LEARNING_MODE) {
     if (config.EXECUTION_MODE !== "paper") {
       console.warn("LEARNING_MODE is set but EXECUTION_MODE is not paper — lessons will not apply");

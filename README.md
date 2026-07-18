@@ -56,6 +56,12 @@ npm run scan       # includes trending poller when TRENDING_ENABLED=true
 
 Tune with `TRENDING_MIN_VOLUME_USD_24H`, `TRENDING_MIN_LIQUIDITY_USD`, and `TRENDING_COOLDOWN_MS`.
 
+Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool discovery:
+
+- Base bonus: trending +10 / boost +12 (not +25/+30)
+- Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.4**)
+- At most `MAX_TRENDING_OPEN_POSITIONS` (default **2**) of your open slots may be trending/boost
+
 ### Re-entry guard (stop-loss churn)
 
 Trending can keep surfacing the same names after a stop-loss. The bot now blocks re-entry by **contract address and ticker** (so Jimothy copycats are covered too):

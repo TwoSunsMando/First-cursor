@@ -324,6 +324,21 @@ export class BotDb {
     ).c;
   }
 
+  countOpenTrendingPositions(mode: ExecutionMode): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c
+           FROM positions p
+           LEFT JOIN signals s ON s.id = p.signal_id
+           WHERE p.status = 'open'
+             AND p.mode = ?
+             AND s.source IN ('trending', 'boost')`,
+        )
+        .get(mode) as { c: number }
+    ).c;
+  }
+
   hasOpenPositionForToken(token: Address, mode?: ExecutionMode): boolean {
     const row = mode
       ? (this.db

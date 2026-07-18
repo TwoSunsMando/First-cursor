@@ -36,6 +36,18 @@ export class PaperEngine {
       logLine(`paper skip ${candidate.symbol}: already open`);
       return;
     }
+    const isTrendingSrc =
+      candidate.source === "trending" || candidate.source === "boost";
+    if (
+      isTrendingSrc &&
+      this.config.MAX_TRENDING_OPEN_POSITIONS >= 0 &&
+      this.db.countOpenTrendingPositions("paper") >= this.config.MAX_TRENDING_OPEN_POSITIONS
+    ) {
+      logLine(
+        `paper skip ${candidate.symbol}: trending slot cap (${this.config.MAX_TRENDING_OPEN_POSITIONS})`,
+      );
+      return;
+    }
     const reentry = getReentryBlock(
       candidate.token,
       candidate.symbol,

@@ -48,6 +48,13 @@ const ConfigSchema = z
     TRENDING_MIN_LIQUIDITY_USD: z.coerce.number().nonnegative().default(5_000),
     TRENDING_MIN_TXNS_24H: z.coerce.number().int().nonnegative().default(50),
     /**
+     * Scale volume/buys/Δ points for trending|boost sources (0–1).
+     * Keeps trending as a signal without letting it monopolize paper slots.
+     */
+    TRENDING_MOMENTUM_SCALE: z.coerce.number().min(0).max(1).default(0.4),
+    /** Max open positions that originated from trending/boost (rest reserved for new pools). */
+    MAX_TRENDING_OPEN_POSITIONS: z.coerce.number().int().nonnegative().default(2),
+    /**
      * After a stop-loss on a token, block re-entry for this long (paper + live).
      * Stops trending from immediately buying Jimothy/STOCKCAT again.
      */
