@@ -24,13 +24,13 @@ const ConfigSchema = z
     MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(5),
     DENY_NAME_SUBSTRINGS: z.string().default("scam,honeypot,test"),
     /** Score ≥ this → BUY (paper open / live approval). Was 55; 45 matches V3+≥1 ETH liq. */
-    BUY_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(45),
+    BUY_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(40),
     /** Score ≥ this (and < BUY) → WATCH. */
-    WATCH_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(35),
+    WATCH_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(32),
     /** Paper-only: mine closed trades into lessons and apply score deltas. */
     LEARNING_MODE: boolFromEnv,
     /** Min closed trades in a feature bucket before a lesson becomes ACTIVE. */
-    LEARN_MIN_SAMPLES: z.coerce.number().int().positive().default(3),
+    LEARN_MIN_SAMPLES: z.coerce.number().int().positive().default(5),
     /** Re-run learning pass while scanning (ms). 0 = only manual `npm run learn`. */
     LEARN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(300_000),
     /** DexPaprika trending / boost poller (default on). */
@@ -53,20 +53,20 @@ const ConfigSchema = z
      */
     TRENDING_MOMENTUM_SCALE: z.coerce.number().min(0).max(1).default(0.55),
     /** Max open positions that originated from trending/boost (rest reserved for new pools). */
-    MAX_TRENDING_OPEN_POSITIONS: z.coerce.number().int().nonnegative().default(2),
+    MAX_TRENDING_OPEN_POSITIONS: z.coerce.number().int().nonnegative().default(3),
     /**
      * After a stop-loss on a token, block re-entry for this long (paper + live).
      * Stops trending from immediately buying Jimothy/STOCKCAT again.
      */
-    REENTRY_AFTER_STOP_MS: z.coerce.number().int().nonnegative().default(6 * 60 * 60 * 1000),
+    REENTRY_AFTER_STOP_MS: z.coerce.number().int().nonnegative().default(3 * 60 * 60 * 1000),
     /** Longer ban after brutal losses (pnl ≤ -50% or exit reason contains -100). */
     REENTRY_AFTER_HARD_LOSS_MS: z.coerce
       .number()
       .int()
       .nonnegative()
-      .default(24 * 60 * 60 * 1000),
+      .default(12 * 60 * 60 * 1000),
     /** If this many stop-losses hit on one token inside the window, use hard-loss cooldown. */
-    REENTRY_STOP_STREAK: z.coerce.number().int().positive().default(2),
+    REENTRY_STOP_STREAK: z.coerce.number().int().positive().default(3),
 
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),

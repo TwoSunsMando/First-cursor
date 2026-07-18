@@ -27,8 +27,8 @@ export interface ScoreWeights {
 }
 
 export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
-  buy: 45,
-  watch: 35,
+  buy: 40,
+  watch: 32,
 };
 
 export const DEFAULT_SCORE_WEIGHTS: ScoreWeights = {

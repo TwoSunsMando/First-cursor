@@ -98,14 +98,14 @@ export function computeScoreDelta(
 
   const winRate = wins / n;
   let delta = 0;
-  if (winRate >= 0.65 && avgPnlPct > 0) delta = 8;
-  else if (winRate >= 0.55 && avgPnlPct > 0) delta = 4;
-  else if (winRate <= 0.35 && avgPnlPct < 0) delta = -10;
-  else if (winRate <= 0.45 && avgPnlPct < 0) delta = -5;
+  // Keep lesson nudges small — stacked -10s were blocking all new entries.
+  if (winRate >= 0.7 && avgPnlPct > 0) delta = 5;
+  else if (winRate >= 0.6 && avgPnlPct > 0) delta = 3;
+  else if (winRate <= 0.3 && avgPnlPct < 0) delta = -5;
+  else if (winRate <= 0.4 && avgPnlPct < 0) delta = -3;
 
-  // Amplify slightly with avg pnl magnitude, still capped
-  if (avgPnlPct >= 40 && delta > 0) delta = Math.min(12, delta + 2);
-  if (avgPnlPct <= -40 && delta < 0) delta = Math.max(-15, delta - 2);
+  if (avgPnlPct >= 40 && delta > 0) delta = Math.min(6, delta + 1);
+  if (avgPnlPct <= -40 && delta < 0) delta = Math.max(-6, delta - 1);
 
   const notes = `winRate=${(winRate * 100).toFixed(0)}% avgPnl=${avgPnlPct.toFixed(1)}% n=${n}`;
   return { delta, active: delta !== 0, notes };
@@ -169,8 +169,13 @@ export function mineLessonsFromTrades(
       avg,
       minSamples,
     );
-    // Exit-reason lessons are diagnostic only (not applied to new entries)
-    const applyActive = active && agg.kind !== "exit_reason" && agg.kind !== "hold_bucket";
+    // Only dex + liquidity lessons apply. score_band/source are circular or overfit early samples.
+    const observational =
+      agg.kind === "exit_reason" ||
+      agg.kind === "hold_bucket" ||
+      agg.kind === "score_band" ||
+      agg.kind === "source_bucket";
+    const applyActive = active && !observational;
     out.push({
       lesson_key: `${agg.kind}:${agg.bucket}`,
       kind: agg.kind,
@@ -182,10 +187,9 @@ export function mineLessonsFromTrades(
       sample_size: agg.n,
       score_delta: applyActive ? delta : 0,
       active: applyActive,
-      notes:
-        agg.kind === "exit_reason" || agg.kind === "hold_bucket"
-          ? `${notes} (observational — not applied to entry score)`
-          : notes,
+      notes: observational
+        ? `${notes} (observational — not applied to entry score)`
+        : notes,
     });
   }
   return out;
@@ -272,8 +276,8 @@ export function lessonScoreDeltaForCandidate(
     );
   }
 
-  // Cap total lesson influence
-  delta = Math.max(-20, Math.min(20, delta));
+  // Cap total lesson influence (was ±20 and starved the book to zero opens)
+  delta = Math.max(-8, Math.min(8, delta));
   return { delta, applied };
 }
 

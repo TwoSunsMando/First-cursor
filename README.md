@@ -22,7 +22,7 @@ npm run positions
 
 Default `EXECUTION_MODE=paper` — no private key required.
 
-Paper BUY defaults to score **≥ 45** (Uniswap V3 + ≥1 ETH liquidity). Tune with `BUY_SCORE_THRESHOLD` / `WATCH_SCORE_THRESHOLD` in `.env`.
+Paper BUY defaults to score **≥ 40**. Tune with `BUY_SCORE_THRESHOLD` / `WATCH_SCORE_THRESHOLD` in `.env`.
 
 ## Learning Mode (paper)
 
