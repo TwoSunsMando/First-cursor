@@ -47,6 +47,20 @@ const ConfigSchema = z
     TRENDING_MIN_VOLUME_USD_24H: z.coerce.number().nonnegative().default(25_000),
     TRENDING_MIN_LIQUIDITY_USD: z.coerce.number().nonnegative().default(5_000),
     TRENDING_MIN_TXNS_24H: z.coerce.number().int().nonnegative().default(50),
+    /**
+     * After a stop-loss on a token, block re-entry for this long (paper + live).
+     * Stops trending from immediately buying Jimothy/STOCKCAT again.
+     */
+    REENTRY_AFTER_STOP_MS: z.coerce.number().int().nonnegative().default(6 * 60 * 60 * 1000),
+    /** Longer ban after brutal losses (pnl ≤ -50% or exit reason contains -100). */
+    REENTRY_AFTER_HARD_LOSS_MS: z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(24 * 60 * 60 * 1000),
+    /** If this many stop-losses hit on one token inside the window, use hard-loss cooldown. */
+    REENTRY_STOP_STREAK: z.coerce.number().int().positive().default(2),
+
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),

@@ -339,6 +339,82 @@ export class BotDb {
     return Boolean(row);
   }
 
+  getLastClosedPosition(token: Address, mode?: ExecutionMode): PositionRow | undefined {
+    if (mode) {
+      return this.db
+        .prepare(
+          `SELECT * FROM positions
+           WHERE status = 'closed' AND lower(token) = lower(?) AND mode = ?
+           ORDER BY datetime(COALESCE(closed_at, opened_at)) DESC
+           LIMIT 1`,
+        )
+        .get(token, mode) as PositionRow | undefined;
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM positions
+         WHERE status = 'closed' AND lower(token) = lower(?)
+         ORDER BY datetime(COALESCE(closed_at, opened_at)) DESC
+         LIMIT 1`,
+      )
+      .get(token) as PositionRow | undefined;
+  }
+
+  countRecentStopLosses(token: Address, mode: ExecutionMode, sinceIso: string): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions
+           WHERE status = 'closed'
+             AND mode = ?
+             AND lower(token) = lower(?)
+             AND exit_reason LIKE 'stop_loss%'
+             AND COALESCE(closed_at, opened_at) >= ?`,
+        )
+        .get(mode, token, sinceIso) as { c: number }
+    ).c;
+  }
+
+  getLastClosedBySymbol(symbol: string, mode?: ExecutionMode): PositionRow | undefined {
+    const sym = symbol.trim();
+    if (!sym || sym === "???") return undefined;
+    if (mode) {
+      return this.db
+        .prepare(
+          `SELECT * FROM positions
+           WHERE status = 'closed' AND mode = ? AND lower(symbol) = lower(?)
+           ORDER BY datetime(COALESCE(closed_at, opened_at)) DESC
+           LIMIT 1`,
+        )
+        .get(mode, sym) as PositionRow | undefined;
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM positions
+         WHERE status = 'closed' AND lower(symbol) = lower(?)
+         ORDER BY datetime(COALESCE(closed_at, opened_at)) DESC
+         LIMIT 1`,
+      )
+      .get(sym) as PositionRow | undefined;
+  }
+
+  countRecentStopLossesBySymbol(symbol: string, mode: ExecutionMode, sinceIso: string): number {
+    const sym = symbol.trim();
+    if (!sym || sym === "???") return 0;
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions
+           WHERE status = 'closed'
+             AND mode = ?
+             AND lower(symbol) = lower(?)
+             AND exit_reason LIKE 'stop_loss%'
+             AND COALESCE(closed_at, opened_at) >= ?`,
+        )
+        .get(mode, sym, sinceIso) as { c: number }
+    ).c;
+  }
+
   listClosedPositions(limit = 50): PositionRow[] {
     return this.db
       .prepare(`SELECT * FROM positions WHERE status = 'closed' ORDER BY id DESC LIMIT ?`)

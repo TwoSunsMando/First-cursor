@@ -1,7 +1,7 @@
 import type { Address } from "viem";
 import type { AppConfig } from "../config.js";
 import type { BotDb } from "../db/schema.js";
-import type { CandidateToken } from "../risk/filters.js";
+import { getReentryBlock, type CandidateToken } from "../risk/filters.js";
 import type { RhPublicClient } from "../chain/client.js";
 import {
   quoteBuyTokensForEth,
@@ -34,6 +34,17 @@ export class PaperEngine {
     }
     if (this.db.hasOpenPositionForToken(candidate.token, "paper")) {
       logLine(`paper skip ${candidate.symbol}: already open`);
+      return;
+    }
+    const reentry = getReentryBlock(
+      candidate.token,
+      candidate.symbol,
+      this.config,
+      this.db,
+      "paper",
+    );
+    if (reentry) {
+      logLine(`paper skip ${candidate.symbol}: ${reentry}`);
       return;
     }
 

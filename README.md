@@ -56,6 +56,18 @@ npm run scan       # includes trending poller when TRENDING_ENABLED=true
 
 Tune with `TRENDING_MIN_VOLUME_USD_24H`, `TRENDING_MIN_LIQUIDITY_USD`, and `TRENDING_COOLDOWN_MS`.
 
+### Re-entry guard (stop-loss churn)
+
+Trending can keep surfacing the same names after a stop-loss. The bot now blocks re-entry by **contract address and ticker** (so Jimothy copycats are covered too):
+
+| Situation | Default cooldown |
+|-----------|------------------|
+| Last exit was `stop_loss` | `REENTRY_AFTER_STOP_MS` (6h) |
+| Hard loss (≤ −50% / −100%) or 2+ stop-losses in window | `REENTRY_AFTER_HARD_LOSS_MS` (24h) |
+| Other losing exit | up to 2h |
+
+Logs look like: `risk: re-entry blocked for STOCKCAT — stop-loss on #17 … wait 5h`.
+
 ### If you see `Too Many Requests`
 
 The public RPC (`rpc.mainnet.chain.robinhood.com`) is rate-limited. The bot now uses a **single HTTP poller** (not 3 overlapping watchers) with backoff, but sustained scanning still needs a provider:
