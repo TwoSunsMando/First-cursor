@@ -10,6 +10,7 @@ import { PaperEngine } from "./paper/engine.js";
 import { LiveGateway } from "./live/gateway.js";
 import { handleCandidate, startIngest } from "./ingest/watcher.js";
 import { robinhoodChain } from "./chain/addresses.js";
+import { formatLessonsReport, runLearningPass } from "./learning/engine.js";
 
 function usage() {
   console.log(`rh-chain-paper-bot — Robinhood Chain meme scanner
@@ -19,9 +20,15 @@ Usage:
   npm run status               Mode, equity, open counts
   npm run report               Paper P&L report
   npm run positions            List open positions
+  npm run learn                Mine closed paper trades → lessons
+  npm run lessons              Show lessons (ACTIVE ones affect Learning Mode)
   npm run pending              List pending live approvals
   npm run approve -- <id>      Approve and execute a pending live order
   npm run start -- reject <id> Reject a pending approval
+
+Learning Mode (paper only):
+  Set LEARNING_MODE=true in .env, run scan, periodically run learn
+  Active lessons adjust entry scores from historical win/loss buckets
 
 Env: copy .env.example → .env
 Docs: https://docs.robinhood.com/chain/
@@ -49,6 +56,17 @@ async function cmdScan() {
   console.log(
     `thresholds: BUY≥${config.BUY_SCORE_THRESHOLD} WATCH≥${config.WATCH_SCORE_THRESHOLD} minLiq=${config.MIN_INITIAL_LIQUIDITY_ETH} ETH`,
   );
+  if (config.LEARNING_MODE) {
+    if (config.EXECUTION_MODE !== "paper") {
+      console.warn("LEARNING_MODE is set but EXECUTION_MODE is not paper — lessons will not apply");
+    } else {
+      console.log(
+        `LEARNING MODE on (minSamples=${config.LEARN_MIN_SAMPLES}, relearn every ${config.LEARN_INTERVAL_MS || "manual-only"}ms)`,
+      );
+      const boot = runLearningPass(db, config.LEARN_MIN_SAMPLES);
+      for (const line of boot.summaryLines) console.log(`  ${line}`);
+    }
+  }
 
   const chainId = await http.getChainId();
   const block = await http.getBlockNumber();
@@ -72,9 +90,22 @@ async function cmdScan() {
     }
   }, config.markIntervalMs);
 
+  let learnTimer: ReturnType<typeof setInterval> | undefined;
+  if (config.LEARNING_MODE && config.LEARN_INTERVAL_MS > 0) {
+    learnTimer = setInterval(() => {
+      try {
+        const result = runLearningPass(db, config.LEARN_MIN_SAMPLES);
+        console.log(`[learn] ${result.summaryLines.join(" | ")}`);
+      } catch (err) {
+        console.error(`learn error: ${(err as Error).message}`);
+      }
+    }, config.LEARN_INTERVAL_MS);
+  }
+
   const shutdown = () => {
     console.log("shutting down…");
     clearInterval(timer);
+    if (learnTimer) clearInterval(learnTimer);
     stopIngest();
     db.close();
     process.exit(0);
@@ -92,7 +123,9 @@ function cmdStatus() {
   const liveOpen = db.countOpenPositions("live");
   const pending = db.listPendingApprovals().length;
   const spent = db.getDailySpend();
+  const activeLessons = db.listLessons(true).length;
   console.log(`mode:           ${config.EXECUTION_MODE}`);
+  console.log(`learning:       ${config.LEARNING_MODE ? "on" : "off"} (${activeLessons} active lessons)`);
   console.log(`rpc:            ${config.RPC_URL}`);
   console.log(`wss:            ${config.wssRpcUrl ?? "(http poll fallback)"}`);
   console.log(`paper open:     ${stats.open}`);
@@ -194,6 +227,23 @@ async function cmdReject(idStr: string) {
   db.close();
 }
 
+function cmdLearn() {
+  const config = loadConfig();
+  const db = new BotDb(config.DB_PATH);
+  const result = runLearningPass(db, config.LEARN_MIN_SAMPLES);
+  for (const line of result.summaryLines) console.log(line);
+  console.log("");
+  console.log(formatLessonsReport(db));
+  db.close();
+}
+
+function cmdLessons() {
+  const config = loadConfig();
+  const db = new BotDb(config.DB_PATH);
+  console.log(formatLessonsReport(db));
+  db.close();
+}
+
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
   switch (cmd) {
@@ -214,6 +264,12 @@ async function main() {
       break;
     case "positions":
       cmdPositions();
+      break;
+    case "learn":
+      cmdLearn();
+      break;
+    case "lessons":
+      cmdLessons();
       break;
     case "pending":
       cmdPending();

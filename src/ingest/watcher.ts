@@ -5,6 +5,7 @@ import type { BotDb } from "../db/schema.js";
 import type { CandidateToken } from "../risk/filters.js";
 import { applyRiskFilters } from "../risk/filters.js";
 import { scoreCandidate } from "../signals/score.js";
+import { lessonScoreDeltaForCandidate } from "../learning/engine.js";
 import { ADDRESSES } from "../chain/addresses.js";
 import {
   noxaFactoryAbi,
@@ -49,14 +50,32 @@ export async function handleCandidate(
     buy: config.BUY_SCORE_THRESHOLD,
     watch: config.WATCH_SCORE_THRESHOLD,
   });
-  const risk = applyRiskFilters(candidate, config, db, mode);
-
-  let action = scored.action;
   const reasons = [...scored.reasons];
+  let finalScore = scored.score;
+
+  // Learning Mode: adjust score from mined paper-trade lessons (paper path only).
+  if (config.LEARNING_MODE && mode === "paper") {
+    const lesson = lessonScoreDeltaForCandidate(db, candidate, scored.score);
+    if (lesson.delta !== 0) {
+      finalScore = scored.score + lesson.delta;
+      reasons.push(
+        `learning Δ${lesson.delta >= 0 ? "+" : ""}${lesson.delta} → score ${finalScore} (${lesson.applied.join("; ")})`,
+      );
+    }
+  }
+
+  let action: "BUY" | "WATCH" | "SKIP" = "SKIP";
+  if (finalScore >= config.BUY_SCORE_THRESHOLD) action = "BUY";
+  else if (finalScore >= config.WATCH_SCORE_THRESHOLD) action = "WATCH";
+
+  const risk = applyRiskFilters(candidate, config, db, mode);
   if (!risk.ok) {
     action = "SKIP";
     reasons.push(...risk.reasons.map((r) => `risk: ${r}`));
   }
+  reasons.push(
+    `final score=${finalScore} → ${action} (buy≥${config.BUY_SCORE_THRESHOLD}, watch≥${config.WATCH_SCORE_THRESHOLD})`,
+  );
 
   const signalId = db.insertSignal({
     token: candidate.token,
@@ -65,7 +84,7 @@ export async function handleCandidate(
     dex: candidate.dex,
     pair_or_pool: candidate.pairOrPool,
     fee: candidate.fee,
-    score: scored.score,
+    score: finalScore,
     action,
     reasons: reasons.join("; "),
     initial_liquidity_eth: candidate.initialLiquidityEth,
@@ -73,9 +92,9 @@ export async function handleCandidate(
   });
 
   logLine(
-    `SIGNAL ${action} ${candidate.symbol} (${candidate.token}) score=${scored.score.toFixed(1)} dex=${candidate.dex} #${signalId}`,
+    `SIGNAL ${action} ${candidate.symbol} (${candidate.token}) score=${finalScore.toFixed(1)} dex=${candidate.dex} #${signalId}`,
   );
-  for (const r of reasons.slice(0, 6)) {
+  for (const r of reasons.slice(0, 8)) {
     logLine(`  · ${r}`);
   }
 

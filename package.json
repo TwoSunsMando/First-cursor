@@ -16,6 +16,8 @@
     "positions": "tsx src/cli.ts positions",
     "approve": "tsx src/cli.ts approve",
     "pending": "tsx src/cli.ts pending",
+    "learn": "tsx src/cli.ts learn",
+    "lessons": "tsx src/cli.ts lessons",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx src/smoke.ts"
   },

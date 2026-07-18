@@ -27,6 +27,12 @@ const ConfigSchema = z
     BUY_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(45),
     /** Score ≥ this (and < BUY) → WATCH. */
     WATCH_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(35),
+    /** Paper-only: mine closed trades into lessons and apply score deltas. */
+    LEARNING_MODE: boolFromEnv,
+    /** Min closed trades in a feature bucket before a lesson becomes ACTIVE. */
+    LEARN_MIN_SAMPLES: z.coerce.number().int().positive().default(3),
+    /** Re-run learning pass while scanning (ms). 0 = only manual `npm run learn`. */
+    LEARN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(300_000),
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),

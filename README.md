@@ -24,6 +24,23 @@ Default `EXECUTION_MODE=paper` — no private key required.
 
 Paper BUY defaults to score **≥ 45** (Uniswap V3 + ≥1 ETH liquidity). Tune with `BUY_SCORE_THRESHOLD` / `WATCH_SCORE_THRESHOLD` in `.env`.
 
+## Learning Mode (paper)
+
+Turn paper trading into a feedback loop:
+
+1. Set `LEARNING_MODE=true` in `.env` (already on in `.env.example`)
+2. Run `npm run scan` — closes feed the lesson miner
+3. Inspect with:
+   ```bash
+   npm run learn     # mine closed paper trades → lessons
+   npm run lessons   # show ACTIVE vs idle lessons
+   npm run report
+   ```
+
+**How it improves:** closed paper trades are bucketed by liquidity, dex, and entry score. Buckets with enough samples (`LEARN_MIN_SAMPLES`, default 3) become **ACTIVE** lessons that add/subtract from the next entry score (capped ±20). Hold-time and exit-reason buckets are logged for insight but not applied to entries.
+
+While scanning, learning re-runs every `LEARN_INTERVAL_MS` (default 5 minutes). Lessons never auto-change live trading.
+
 ### If you see `Too Many Requests`
 
 The public RPC (`rpc.mainnet.chain.robinhood.com`) is rate-limited. The bot now uses a **single HTTP poller** (not 3 overlapping watchers) with backoff, but sustained scanning still needs a provider:

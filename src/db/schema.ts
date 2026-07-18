@@ -72,6 +72,36 @@ export interface SpendRow {
   spent_eth: number;
 }
 
+export type LessonKind = "liquidity_bucket" | "dex" | "score_band" | "hold_bucket" | "exit_reason";
+
+export interface LessonRow {
+  id: number;
+  lesson_key: string;
+  kind: LessonKind;
+  label: string;
+  condition_json: string;
+  wins: number;
+  losses: number;
+  avg_pnl_pct: number;
+  sample_size: number;
+  score_delta: number;
+  active: number;
+  updated_at: string;
+  notes: string | null;
+}
+
+export interface ClosedTradeFeatures {
+  position_id: number;
+  symbol: string;
+  dex: DexKind;
+  pnl_pct: number;
+  exit_reason: string | null;
+  hold_minutes: number;
+  score: number | null;
+  initial_liquidity_eth: number | null;
+  signal_action: string | null;
+}
+
 export class BotDb {
   readonly db: Database.Database;
 
@@ -151,9 +181,26 @@ export class BotDb {
         value TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS lessons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        condition_json TEXT NOT NULL,
+        wins INTEGER NOT NULL DEFAULT 0,
+        losses INTEGER NOT NULL DEFAULT 0,
+        avg_pnl_pct REAL NOT NULL DEFAULT 0,
+        sample_size INTEGER NOT NULL DEFAULT 0,
+        score_delta REAL NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        notes TEXT
+      );
+
       CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
       CREATE INDEX IF NOT EXISTS idx_signals_token ON signals(token);
+      CREATE INDEX IF NOT EXISTS idx_lessons_active ON lessons(active);
     `);
   }
 
@@ -422,6 +469,133 @@ export class BotDb {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       )
       .run(key, value);
+  }
+
+  getSignal(id: number): SignalRow | undefined {
+    return this.db.prepare(`SELECT * FROM signals WHERE id = ?`).get(id) as
+      | SignalRow
+      | undefined;
+  }
+
+  listClosedPaperTradesWithFeatures(): ClosedTradeFeatures[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           p.id AS position_id,
+           p.symbol AS symbol,
+           p.dex AS dex,
+           p.pnl_pct AS pnl_pct,
+           p.exit_reason AS exit_reason,
+           p.opened_at AS opened_at,
+           p.closed_at AS closed_at,
+           s.score AS score,
+           s.initial_liquidity_eth AS initial_liquidity_eth,
+           s.action AS signal_action
+         FROM positions p
+         LEFT JOIN signals s ON s.id = p.signal_id
+         WHERE p.mode = 'paper' AND p.status = 'closed' AND p.pnl_pct IS NOT NULL
+         ORDER BY p.id ASC`,
+      )
+      .all() as Array<{
+      position_id: number;
+      symbol: string;
+      dex: DexKind;
+      pnl_pct: number;
+      exit_reason: string | null;
+      opened_at: string;
+      closed_at: string | null;
+      score: number | null;
+      initial_liquidity_eth: number | null;
+      signal_action: string | null;
+    }>;
+
+    return rows.map((r) => {
+      const opened = Date.parse(r.opened_at);
+      const closed = r.closed_at ? Date.parse(r.closed_at) : opened;
+      const hold_minutes = Math.max(0, (closed - opened) / 60_000);
+      return {
+        position_id: r.position_id,
+        symbol: r.symbol,
+        dex: r.dex,
+        pnl_pct: r.pnl_pct,
+        exit_reason: r.exit_reason,
+        hold_minutes,
+        score: r.score,
+        initial_liquidity_eth: r.initial_liquidity_eth,
+        signal_action: r.signal_action,
+      };
+    });
+  }
+
+  upsertLesson(input: {
+    lesson_key: string;
+    kind: LessonKind;
+    label: string;
+    condition_json: string;
+    wins: number;
+    losses: number;
+    avg_pnl_pct: number;
+    sample_size: number;
+    score_delta: number;
+    active: boolean;
+    notes?: string | null;
+  }): void {
+    const updated_at = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO lessons
+          (lesson_key, kind, label, condition_json, wins, losses, avg_pnl_pct, sample_size, score_delta, active, updated_at, notes)
+         VALUES
+          (@lesson_key, @kind, @label, @condition_json, @wins, @losses, @avg_pnl_pct, @sample_size, @score_delta, @active, @updated_at, @notes)
+         ON CONFLICT(lesson_key) DO UPDATE SET
+          kind = excluded.kind,
+          label = excluded.label,
+          condition_json = excluded.condition_json,
+          wins = excluded.wins,
+          losses = excluded.losses,
+          avg_pnl_pct = excluded.avg_pnl_pct,
+          sample_size = excluded.sample_size,
+          score_delta = excluded.score_delta,
+          active = excluded.active,
+          updated_at = excluded.updated_at,
+          notes = excluded.notes`,
+      )
+      .run({
+        ...input,
+        active: input.active ? 1 : 0,
+        updated_at,
+        notes: input.notes ?? null,
+      });
+  }
+
+  deactivateStaleLessons(keepKeys: string[]) {
+    if (!keepKeys.length) {
+      this.db.prepare(`UPDATE lessons SET active = 0`).run();
+      return;
+    }
+    const placeholders = keepKeys.map(() => "?").join(",");
+    this.db
+      .prepare(`UPDATE lessons SET active = 0 WHERE lesson_key NOT IN (${placeholders})`)
+      .run(...keepKeys);
+  }
+
+  listLessons(activeOnly = false): LessonRow[] {
+    if (activeOnly) {
+      return this.db
+        .prepare(`SELECT * FROM lessons WHERE active = 1 ORDER BY ABS(score_delta) DESC, sample_size DESC`)
+        .all() as LessonRow[];
+    }
+    return this.db
+      .prepare(`SELECT * FROM lessons ORDER BY updated_at DESC, ABS(score_delta) DESC`)
+      .all() as LessonRow[];
+  }
+
+  countClosedPaperTrades(): number {
+    return (
+      this.db
+        .prepare(`SELECT COUNT(*) AS c FROM positions WHERE mode = 'paper' AND status = 'closed'`)
+        .get() as { c: number }
+    ).c;
   }
 
   close() {
