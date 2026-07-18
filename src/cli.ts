@@ -46,6 +46,9 @@ async function cmdScan() {
   } else {
     console.log("PAPER mode (set EXECUTION_MODE=live for real swaps + approvals)");
   }
+  console.log(
+    `thresholds: BUY≥${config.BUY_SCORE_THRESHOLD} WATCH≥${config.WATCH_SCORE_THRESHOLD} minLiq=${config.MIN_INITIAL_LIQUIDITY_ETH} ETH`,
+  );
 
   const chainId = await http.getChainId();
   const block = await http.getBlockNumber();

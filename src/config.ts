@@ -23,6 +23,10 @@ const ConfigSchema = z
     MIN_INITIAL_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.05),
     MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(5),
     DENY_NAME_SUBSTRINGS: z.string().default("scam,honeypot,test"),
+    /** Score ≥ this → BUY (paper open / live approval). Was 55; 45 matches V3+≥1 ETH liq. */
+    BUY_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(45),
+    /** Score ≥ this (and < BUY) → WATCH. */
+    WATCH_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(35),
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),
@@ -70,6 +74,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const denyNameSubstrings = parsed.DENY_NAME_SUBSTRINGS.split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+
+  if (parsed.WATCH_SCORE_THRESHOLD > parsed.BUY_SCORE_THRESHOLD) {
+    throw new Error("WATCH_SCORE_THRESHOLD cannot exceed BUY_SCORE_THRESHOLD");
+  }
 
   return {
     ...parsed,

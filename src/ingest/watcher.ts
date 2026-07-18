@@ -45,7 +45,10 @@ export async function handleCandidate(
   live: LiveGateway | null,
 ): Promise<void> {
   const mode = config.EXECUTION_MODE;
-  const scored = scoreCandidate(candidate);
+  const scored = scoreCandidate(candidate, undefined, {
+    buy: config.BUY_SCORE_THRESHOLD,
+    watch: config.WATCH_SCORE_THRESHOLD,
+  });
   const risk = applyRiskFilters(candidate, config, db, mode);
 
   let action = scored.action;

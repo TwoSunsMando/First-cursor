@@ -7,6 +7,16 @@ export interface ScoredSignal {
   reasons: string[];
 }
 
+export interface ScoreThresholds {
+  buy: number;
+  watch: number;
+}
+
+export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
+  buy: 45,
+  watch: 35,
+};
+
 /**
  * Simple heuristic scorer for v1.
  * Weights: launch source, liquidity, and early volume velocity (if provided).
@@ -14,6 +24,7 @@ export interface ScoredSignal {
 export function scoreCandidate(
   candidate: CandidateToken,
   extras?: { volumeEth15m?: number; uniqueBuyers?: number },
+  thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
 ): ScoredSignal {
   const reasons: string[] = [];
   let score = 0;
@@ -68,9 +79,11 @@ export function scoreCandidate(
   }
 
   let action: SignalAction = "SKIP";
-  if (score >= 55) action = "BUY";
-  else if (score >= 35) action = "WATCH";
+  if (score >= thresholds.buy) action = "BUY";
+  else if (score >= thresholds.watch) action = "WATCH";
 
-  reasons.push(`final score=${score} → ${action}`);
+  reasons.push(
+    `final score=${score} → ${action} (buy≥${thresholds.buy}, watch≥${thresholds.watch})`,
+  );
   return { score, action, reasons };
 }

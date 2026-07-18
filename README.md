@@ -22,6 +22,8 @@ npm run positions
 
 Default `EXECUTION_MODE=paper` — no private key required.
 
+Paper BUY defaults to score **≥ 45** (Uniswap V3 + ≥1 ETH liquidity). Tune with `BUY_SCORE_THRESHOLD` / `WATCH_SCORE_THRESHOLD` in `.env`.
+
 ### If you see `Too Many Requests`
 
 The public RPC (`rpc.mainnet.chain.robinhood.com`) is rate-limited. The bot now uses a **single HTTP poller** (not 3 overlapping watchers) with backoff, but sustained scanning still needs a provider:
