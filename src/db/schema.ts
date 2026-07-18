@@ -24,6 +24,7 @@ export interface SignalRow {
   reasons: string;
   initial_liquidity_eth: number | null;
   tx_hash: string | null;
+  source: string | null;
 }
 
 export interface PositionRow {
@@ -72,7 +73,13 @@ export interface SpendRow {
   spent_eth: number;
 }
 
-export type LessonKind = "liquidity_bucket" | "dex" | "score_band" | "hold_bucket" | "exit_reason";
+export type LessonKind =
+  | "liquidity_bucket"
+  | "dex"
+  | "score_band"
+  | "hold_bucket"
+  | "exit_reason"
+  | "source_bucket";
 
 export interface LessonRow {
   id: number;
@@ -100,6 +107,7 @@ export interface ClosedTradeFeatures {
   score: number | null;
   initial_liquidity_eth: number | null;
   signal_action: string | null;
+  source: string | null;
 }
 
 export class BotDb {
@@ -202,6 +210,13 @@ export class BotDb {
       CREATE INDEX IF NOT EXISTS idx_signals_token ON signals(token);
       CREATE INDEX IF NOT EXISTS idx_lessons_active ON lessons(active);
     `);
+
+    const signalCols = this.db.prepare(`PRAGMA table_info(signals)`).all() as Array<{
+      name: string;
+    }>;
+    if (!signalCols.some((c) => c.name === "source")) {
+      this.db.exec(`ALTER TABLE signals ADD COLUMN source TEXT`);
+    }
   }
 
   insertSignal(input: Omit<SignalRow, "id" | "created_at"> & { created_at?: string }): number {
@@ -209,10 +224,10 @@ export class BotDb {
     const result = this.db
       .prepare(
         `INSERT INTO signals
-          (created_at, token, symbol, name, dex, pair_or_pool, fee, score, action, reasons, initial_liquidity_eth, tx_hash)
-         VALUES (@created_at, @token, @symbol, @name, @dex, @pair_or_pool, @fee, @score, @action, @reasons, @initial_liquidity_eth, @tx_hash)`,
+          (created_at, token, symbol, name, dex, pair_or_pool, fee, score, action, reasons, initial_liquidity_eth, tx_hash, source)
+         VALUES (@created_at, @token, @symbol, @name, @dex, @pair_or_pool, @fee, @score, @action, @reasons, @initial_liquidity_eth, @tx_hash, @source)`,
       )
-      .run({ ...input, created_at });
+      .run({ ...input, created_at, source: input.source ?? null });
     return Number(result.lastInsertRowid);
   }
 
@@ -490,7 +505,8 @@ export class BotDb {
            p.closed_at AS closed_at,
            s.score AS score,
            s.initial_liquidity_eth AS initial_liquidity_eth,
-           s.action AS signal_action
+           s.action AS signal_action,
+           s.source AS source
          FROM positions p
          LEFT JOIN signals s ON s.id = p.signal_id
          WHERE p.mode = 'paper' AND p.status = 'closed' AND p.pnl_pct IS NOT NULL
@@ -507,6 +523,7 @@ export class BotDb {
       score: number | null;
       initial_liquidity_eth: number | null;
       signal_action: string | null;
+      source: string | null;
     }>;
 
     return rows.map((r) => {
@@ -523,6 +540,7 @@ export class BotDb {
         score: r.score,
         initial_liquidity_eth: r.initial_liquidity_eth,
         signal_action: r.signal_action,
+        source: r.source,
       };
     });
   }

@@ -33,6 +33,20 @@ const ConfigSchema = z
     LEARN_MIN_SAMPLES: z.coerce.number().int().positive().default(3),
     /** Re-run learning pass while scanning (ms). 0 = only manual `npm run learn`. */
     LEARN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(300_000),
+    /** DexPaprika trending / boost poller (default on). */
+    TRENDING_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    TRENDING_INTERVAL_MS: z.coerce.number().int().positive().default(120_000),
+    TRENDING_COOLDOWN_MS: z.coerce.number().int().positive().default(900_000),
+    TRENDING_LIMIT: z.coerce.number().int().positive().default(15),
+    TRENDING_MIN_VOLUME_USD_24H: z.coerce.number().nonnegative().default(25_000),
+    TRENDING_MIN_LIQUIDITY_USD: z.coerce.number().nonnegative().default(5_000),
+    TRENDING_MIN_TXNS_24H: z.coerce.number().int().nonnegative().default(50),
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),

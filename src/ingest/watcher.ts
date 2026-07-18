@@ -4,7 +4,7 @@ import type { AppConfig } from "../config.js";
 import type { BotDb } from "../db/schema.js";
 import type { CandidateToken } from "../risk/filters.js";
 import { applyRiskFilters } from "../risk/filters.js";
-import { scoreCandidate } from "../signals/score.js";
+import { scoreCandidate, type ScoreExtras } from "../signals/score.js";
 import { lessonScoreDeltaForCandidate } from "../learning/engine.js";
 import { ADDRESSES } from "../chain/addresses.js";
 import {
@@ -44,9 +44,10 @@ export async function handleCandidate(
   db: BotDb,
   paper: PaperEngine,
   live: LiveGateway | null,
+  extras: ScoreExtras = {},
 ): Promise<void> {
   const mode = config.EXECUTION_MODE;
-  const scored = scoreCandidate(candidate, undefined, {
+  const scored = scoreCandidate(candidate, extras, {
     buy: config.BUY_SCORE_THRESHOLD,
     watch: config.WATCH_SCORE_THRESHOLD,
   });
@@ -89,6 +90,7 @@ export async function handleCandidate(
     reasons: reasons.join("; "),
     initial_liquidity_eth: candidate.initialLiquidityEth,
     tx_hash: candidate.txHash,
+    source: candidate.source,
   });
 
   logLine(

@@ -64,6 +64,7 @@ async function main() {
     reasons: "smoke forced",
     initial_liquidity_eth: 1.5,
     tx_hash: null,
+    source: "smoke",
   }));
 
   console.log(paper.report());

@@ -12,18 +12,27 @@ export interface ScoreThresholds {
   watch: number;
 }
 
+export interface ScoreExtras {
+  volumeEth15m?: number;
+  uniqueBuyers?: number;
+  volumeUsd24h?: number;
+  priceChange1hPct?: number | null;
+  priceChange15mPct?: number | null;
+  txns24h?: number;
+}
+
 export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
   buy: 45,
   watch: 35,
 };
 
 /**
- * Simple heuristic scorer for v1.
- * Weights: launch source, liquidity, and early volume velocity (if provided).
+ * Heuristic scorer.
+ * Weights: source, liquidity, 15m volume, buyers, and short-window boosts.
  */
 export function scoreCandidate(
   candidate: CandidateToken,
-  extras?: { volumeEth15m?: number; uniqueBuyers?: number },
+  extras: ScoreExtras = {},
   thresholds: ScoreThresholds = DEFAULT_SCORE_THRESHOLDS,
 ): ScoredSignal {
   const reasons: string[] = [];
@@ -32,6 +41,12 @@ export function scoreCandidate(
   if (candidate.source === "noxa") {
     score += 35;
     reasons.push("NOXA launch (+35)");
+  } else if (candidate.source === "boost") {
+    score += 30;
+    reasons.push("recent boost (+30)");
+  } else if (candidate.source === "trending") {
+    score += 25;
+    reasons.push("trending list (+25)");
   } else if (candidate.dex === "v3") {
     score += 20;
     reasons.push("Uniswap V3 pool (+20)");
@@ -57,7 +72,7 @@ export function scoreCandidate(
     reasons.push("liquidity unknown (0)");
   }
 
-  const vol = extras?.volumeEth15m ?? 0;
+  const vol = extras.volumeEth15m ?? 0;
   if (vol >= 5) {
     score += 25;
     reasons.push(`15m vol ${vol.toFixed(2)} ETH (+25)`);
@@ -69,13 +84,36 @@ export function scoreCandidate(
     reasons.push(`15m vol ${vol.toFixed(2)} ETH (+8)`);
   }
 
-  const buyers = extras?.uniqueBuyers ?? 0;
+  const buyers = extras.uniqueBuyers ?? 0;
   if (buyers >= 20) {
     score += 15;
-    reasons.push(`buyers ${buyers} (+15)`);
+    reasons.push(`buys ${buyers} (+15)`);
   } else if (buyers >= 5) {
     score += 8;
-    reasons.push(`buyers ${buyers} (+8)`);
+    reasons.push(`buys ${buyers} (+8)`);
+  }
+
+  const chg15 = extras.priceChange15mPct;
+  if (chg15 != null && Number.isFinite(chg15)) {
+    if (chg15 >= 25) {
+      score += 12;
+      reasons.push(`15m Δ +${chg15.toFixed(1)}% (+12)`);
+    } else if (chg15 >= 10) {
+      score += 6;
+      reasons.push(`15m Δ +${chg15.toFixed(1)}% (+6)`);
+    } else if (chg15 <= -40) {
+      score -= 8;
+      reasons.push(`15m Δ ${chg15.toFixed(1)}% (-8 dump)`);
+    }
+  }
+
+  const vol24 = extras.volumeUsd24h ?? 0;
+  if (vol24 >= 1_000_000) {
+    score += 8;
+    reasons.push(`24h vol $${(vol24 / 1e6).toFixed(2)}M (+8)`);
+  } else if (vol24 >= 100_000) {
+    score += 4;
+    reasons.push(`24h vol $${(vol24 / 1e3).toFixed(0)}k (+4)`);
   }
 
   let action: SignalAction = "SKIP";

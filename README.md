@@ -41,6 +41,21 @@ Turn paper trading into a feedback loop:
 
 While scanning, learning re-runs every `LEARN_INTERVAL_MS` (default 5 minutes). Lessons never auto-change live trading.
 
+## Trending + boost scanning
+
+In addition to watching new on-chain pools, the bot polls **DexPaprika** (no API key) for Robinhood Chain:
+
+- Top pools by 24h volume and txn count
+- Short-window “boosts” (15m volume + sharp 5m/15m price moves)
+- Feeds 15m volume / buys into the scorer (points that were previously always zero)
+
+```bash
+npm run trending   # one-shot list
+npm run scan       # includes trending poller when TRENDING_ENABLED=true
+```
+
+Tune with `TRENDING_MIN_VOLUME_USD_24H`, `TRENDING_MIN_LIQUIDITY_USD`, and `TRENDING_COOLDOWN_MS`.
+
 ### If you see `Too Many Requests`
 
 The public RPC (`rpc.mainnet.chain.robinhood.com`) is rate-limited. The bot now uses a **single HTTP poller** (not 3 overlapping watchers) with backoff, but sustained scanning still needs a provider:

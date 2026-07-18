@@ -11,6 +11,7 @@
     "build": "tsc",
     "start": "tsx src/cli.ts",
     "scan": "tsx src/cli.ts scan",
+    "trending": "tsx src/cli.ts trending",
     "status": "tsx src/cli.ts status",
     "report": "tsx src/cli.ts report",
     "positions": "tsx src/cli.ts positions",

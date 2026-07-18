@@ -11,12 +11,14 @@ import { LiveGateway } from "./live/gateway.js";
 import { handleCandidate, startIngest } from "./ingest/watcher.js";
 import { robinhoodChain } from "./chain/addresses.js";
 import { formatLessonsReport, runLearningPass } from "./learning/engine.js";
+import { printTrendingOnce, startTrendingPoller } from "./ingest/trending.js";
 
 function usage() {
   console.log(`rh-chain-paper-bot — Robinhood Chain meme scanner
 
 Usage:
   npm run scan                 Start scanner (paper by default)
+  npm run trending             One-shot DexPaprika trending / boost list
   npm run status               Mode, equity, open counts
   npm run report               Paper P&L report
   npm run positions            List open positions
@@ -29,6 +31,9 @@ Usage:
 Learning Mode (paper only):
   Set LEARNING_MODE=true in .env, run scan, periodically run learn
   Active lessons adjust entry scores from historical win/loss buckets
+
+Trending (DexPaprika):
+  TRENDING_ENABLED=true polls top volume/txn pools + recent boosts into the scorer
 
 Env: copy .env.example → .env
 Docs: https://docs.robinhood.com/chain/
@@ -80,6 +85,7 @@ async function cmdScan() {
   const stopIngest = await startIngest(watchClient, config, (c) =>
     handleCandidate(c, config, db, paper, live),
   );
+  const stopTrending = startTrendingPoller(config, db, paper, live);
 
   const timer = setInterval(async () => {
     try {
@@ -106,6 +112,7 @@ async function cmdScan() {
     console.log("shutting down…");
     clearInterval(timer);
     if (learnTimer) clearInterval(learnTimer);
+    stopTrending();
     stopIngest();
     db.close();
     process.exit(0);
@@ -126,6 +133,7 @@ function cmdStatus() {
   const activeLessons = db.listLessons(true).length;
   console.log(`mode:           ${config.EXECUTION_MODE}`);
   console.log(`learning:       ${config.LEARNING_MODE ? "on" : "off"} (${activeLessons} active lessons)`);
+  console.log(`trending:       ${config.TRENDING_ENABLED ? "on" : "off"} (DexPaprika)`);
   console.log(`rpc:            ${config.RPC_URL}`);
   console.log(`wss:            ${config.wssRpcUrl ?? "(http poll fallback)"}`);
   console.log(`paper open:     ${stats.open}`);
@@ -244,6 +252,11 @@ function cmdLessons() {
   db.close();
 }
 
+async function cmdTrending() {
+  const config = loadConfig();
+  await printTrendingOnce(config);
+}
+
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
   switch (cmd) {
@@ -255,6 +268,9 @@ async function main() {
       break;
     case "scan":
       await cmdScan();
+      break;
+    case "trending":
+      await cmdTrending();
       break;
     case "status":
       cmdStatus();

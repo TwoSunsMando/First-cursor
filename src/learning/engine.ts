@@ -69,6 +69,10 @@ function labelFor(kind: LessonKind, bucket: string): string {
     v2: "dex = Uniswap V2",
     v3: "dex = Uniswap V3",
     noxa: "dex = NOXA",
+    trending: "source = trending",
+    boost: "source = boost",
+    uniswap_v2: "source = new V2 pool",
+    uniswap_v3: "source = new V3 pool",
   };
   return map[bucket] ?? `${kind}:${bucket}`;
 }
@@ -153,6 +157,7 @@ export function mineLessonsFromTrades(
     bump(map, "score_band", scoreBand(t.score), t);
     bump(map, "hold_bucket", holdBucket(t.hold_minutes), t);
     bump(map, "exit_reason", exitBucket(t.exit_reason), t);
+    if (t.source) bump(map, "source_bucket", t.source, t);
   }
 
   const out = [];
@@ -253,6 +258,7 @@ export function lessonScoreDeltaForCandidate(
     `liquidity_bucket:${liquidityBucket(candidate.initialLiquidityEth)}`,
     `dex:${candidate.dex}`,
     `score_band:${scoreBand(entryScore)}`,
+    `source_bucket:${candidate.source}`,
   ]);
 
   let delta = 0;
