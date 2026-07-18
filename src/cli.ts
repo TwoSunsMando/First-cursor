@@ -67,7 +67,7 @@ async function cmdScan() {
     } catch (err) {
       console.error(`mark/exit error: ${(err as Error).message}`);
     }
-  }, config.POLL_INTERVAL_MS);
+  }, config.markIntervalMs);
 
   const shutdown = () => {
     console.log("shutting down…");

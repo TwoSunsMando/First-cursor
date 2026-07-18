@@ -30,7 +30,14 @@ const ConfigSchema = z
     AUTO_SELL: boolFromEnv,
     APPROVAL_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     DB_PATH: z.string().default("./data/bot.db"),
-    POLL_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+    /** How often the HTTP poller / mark-to-market loop ticks. Public RPC: keep ≥20000. */
+    POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    /** Separate mark-to-market cadence (paper exits). Defaults to POLL_INTERVAL_MS if unset. */
+    MARK_INTERVAL_MS: z.coerce.number().int().positive().optional(),
+    /** Max blocks per eth_getLogs window on HTTP poller (RH Chain is ~100ms blocks). */
+    MAX_BLOCKS_PER_POLL: z.coerce.number().int().positive().default(80),
+    /** Delay between enriching candidates (token meta / liquidity reads). */
+    ENRICH_DELAY_MS: z.coerce.number().int().nonnegative().default(250),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.EXECUTION_MODE === "live") {
@@ -55,6 +62,7 @@ export type AppConfig = z.infer<typeof ConfigSchema> & {
   denyNameSubstrings: string[];
   wssRpcUrl: string | undefined;
   privateKey: `0x${string}` | undefined;
+  markIntervalMs: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -71,5 +79,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       parsed.PRIVATE_KEY && isHex(parsed.PRIVATE_KEY)
         ? (parsed.PRIVATE_KEY as `0x${string}`)
         : undefined,
+    markIntervalMs: parsed.MARK_INTERVAL_MS ?? parsed.POLL_INTERVAL_MS,
   };
 }

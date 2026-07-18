@@ -22,6 +22,20 @@ npm run positions
 
 Default `EXECUTION_MODE=paper` — no private key required.
 
+### If you see `Too Many Requests`
+
+The public RPC (`rpc.mainnet.chain.robinhood.com`) is rate-limited. The bot now uses a **single HTTP poller** (not 3 overlapping watchers) with backoff, but sustained scanning still needs a provider:
+
+1. Create a free [Alchemy](https://www.alchemy.com/) app on Robinhood Chain
+2. Set both in `.env`:
+   ```env
+   RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY
+   WSS_RPC_URL=wss://robinhood-mainnet.g.alchemy.com/v2/YOUR_KEY
+   ```
+3. Restart `npm run scan`
+
+Without WSS, keep `POLL_INTERVAL_MS≥30000` and only run **one** scan process.
+
 ## What it watches
 
 | Source | Event |
