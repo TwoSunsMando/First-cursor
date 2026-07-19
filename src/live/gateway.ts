@@ -76,6 +76,18 @@ export class LiveGateway {
       notes: `Approve in UI (or: npm run approve -- ${id})`,
     });
 
+    if (this.config.AUTO_APPROVE_BUYS) {
+      logLine(
+        `AUTO_APPROVE BUY #${id} ${candidate.symbol} ${sizeEth} ETH (signal #${signalId})`,
+      );
+      try {
+        await this.approve(id);
+      } catch (err) {
+        logLine(`AUTO_APPROVE #${id} failed: ${(err as Error).message}`);
+      }
+      return;
+    }
+
     logLine(
       `LIVE APPROVAL NEEDED #${id} BUY ${candidate.symbol} ${sizeEth} ETH (expires ${expires})`,
     );

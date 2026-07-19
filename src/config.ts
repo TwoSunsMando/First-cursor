@@ -191,6 +191,22 @@ const ConfigSchema = z
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),
     MAX_SLIPPAGE_BPS: z.coerce.number().int().positive().default(300),
     AUTO_SELL: boolFromEnv,
+    /**
+     * Live: skip human Yes/No — execute buys that already passed score+gates.
+     * Use only with tight caps + LIVE_LAUNCH_ONLY for unattended overnight.
+     */
+    AUTO_APPROVE_BUYS: boolFromEnv,
+    /**
+     * Live: only BUY launch sources (noxa / uniswap_v2 / uniswap_v3).
+     * Skips trending/boost entries — matches paper moon winners.
+     */
+    LIVE_LAUNCH_ONLY: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return false;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
     APPROVAL_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     DB_PATH: z.string().default("./data/bot.db"),
     /** How often the HTTP poller / mark-to-market loop ticks. Public RPC: keep ≥20000. */

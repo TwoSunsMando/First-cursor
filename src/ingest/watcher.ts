@@ -119,6 +119,23 @@ export async function handleCandidate(
     );
   }
 
+  // Live overnight moon-hunt: only new-pool / NOXA launches (skip trending/boost).
+  const isLaunchSrc =
+    working.source === "noxa" ||
+    working.source === "uniswap_v2" ||
+    working.source === "uniswap_v3";
+  if (
+    action === "BUY" &&
+    mode === "live" &&
+    config.LIVE_LAUNCH_ONLY &&
+    !isLaunchSrc
+  ) {
+    action = "SKIP";
+    reasons.push(
+      `live: launch-only mode — skip source=${working.source} (want noxa/v2/v3)`,
+    );
+  }
+
   // Anti-instant-rug: settle launch liq + require buy→sell roundtrip before BUY.
   if (action === "BUY" && client) {
     const gates = await assertBuyGates(client, working, config);

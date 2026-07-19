@@ -131,6 +131,15 @@ export class BotRunner {
         const wallet = createRhWalletClient(this.config);
         this.live = new LiveGateway(this.config, this.db, http, wallet);
         logLine(`LIVE mode wallet=${wallet.account.address}`);
+        if (this.config.AUTO_APPROVE_BUYS) {
+          logLine("AUTO_APPROVE_BUYS=on — buys execute without Yes/No");
+        }
+        if (this.config.LIVE_LAUNCH_ONLY) {
+          logLine("LIVE_LAUNCH_ONLY=on — buys only noxa/v2/v3 launches");
+        }
+        if (this.config.AUTO_SELL) {
+          logLine("AUTO_SELL=on — exits/trims execute without Yes/No");
+        }
       } else {
         logLine("PAPER mode");
       }

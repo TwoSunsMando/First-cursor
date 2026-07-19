@@ -77,7 +77,14 @@ async function cmdUi() {
   if (config.EXECUTION_MODE === "live") {
     console.log("╔══════════════════════════════════════╗");
     console.log("║           MODE = LIVE                ║");
-    console.log("║  Real funds — approve buys carefully ║");
+    if (config.AUTO_APPROVE_BUYS) {
+      console.log("║  AUTO_APPROVE on — unattended buys   ║");
+    } else {
+      console.log("║  Real funds — approve buys carefully ║");
+    }
+    if (config.LIVE_LAUNCH_ONLY) {
+      console.log("║  LAUNCH-ONLY (moon-hunt entries)     ║");
+    }
     console.log("╚══════════════════════════════════════╝");
   } else {
     console.log("┌──────────────────────────────────────┐");

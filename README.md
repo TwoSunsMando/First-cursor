@@ -125,6 +125,24 @@ Launches no longer auto-pass. Before BUY:
 
 Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` in logs instead of opens.
 
+### Overnight live moon-hunt (~$50 / 2 slots)
+
+Still enters as **scout**, then upgrades to **moon** if it runs. For unattended overnight:
+
+| Knob | Suggested |
+|------|-----------|
+| `MAX_OPEN_POSITIONS` / `MAX_MOON_POSITIONS` | **2** / **2** |
+| `MAX_BUY_ETH` | **0.01** (~$18–19) |
+| `MAX_DAILY_ETH` | **0.022** (2 buys; leave gas) |
+| `LIVE_LAUNCH_ONLY` | **true** (noxa/v2/v3 only) |
+| `TRENDING_ENABLED` | **false** |
+| `AUTO_APPROVE_BUYS` | **true** (no Yes click) |
+| `AUTO_SELL` | **true** (trim/trail/stop on-chain) |
+| `MIN_LAUNCH_LIQUIDITY_ETH` | **1** (paper moons were thicker) |
+| `DB_PATH` | separate live DB e.g. `./data/live-overnight.db` |
+
+Flow: launch signal → settle + sellable gates → auto-buy → scout → moon upgrade if +35% early → trim/trail with `AUTO_SELL`.
+
 ### Re-entry guard (stop-loss / chop churn)
 
 Trending can keep surfacing the same names after a stop-loss. The bot blocks re-entry by **contract address and ticker** (so Jimothy copycats are covered too):
