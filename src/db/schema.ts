@@ -9,6 +9,8 @@ export type PositionStatus = "open" | "closed";
 export type ExecutionMode = "paper" | "live";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "executed";
 export type DexKind = "v2" | "v3" | "noxa";
+/** Scout = default TP/SL/hold. Moon = scale-out + trail after upgrade. */
+export type PositionBook = "scout" | "moon";
 
 export interface SignalRow {
   id: number;
@@ -48,6 +50,18 @@ export interface PositionRow {
   entry_tx: string | null;
   exit_tx: string | null;
   signal_id: number | null;
+  /** scout (default) or moon (runner scale-out / trail) */
+  book: PositionBook;
+  original_size_eth: number;
+  original_token_amount: string;
+  peak_price_eth: number;
+  realized_partial_pnl_eth: number;
+  /** Bitmask: bit0=+TP trim, bit1=+2x, bit2=+5x, bit3=+10x */
+  moon_trim_mask: number;
+  moon_reasons: string | null;
+  moon_flagged_at: string | null;
+  /** After first moon trim, stop moves to entry / trail */
+  breakeven_stop: number;
 }
 
 export interface ApprovalRow {
@@ -217,6 +231,49 @@ export class BotDb {
     if (!signalCols.some((c) => c.name === "source")) {
       this.db.exec(`ALTER TABLE signals ADD COLUMN source TEXT`);
     }
+
+    const posCols = this.db.prepare(`PRAGMA table_info(positions)`).all() as Array<{
+      name: string;
+    }>;
+    const hasPos = (name: string) => posCols.some((c) => c.name === name);
+    if (!hasPos("book")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN book TEXT NOT NULL DEFAULT 'scout'`);
+    }
+    if (!hasPos("original_size_eth")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN original_size_eth REAL`);
+      this.db.exec(
+        `UPDATE positions SET original_size_eth = size_eth WHERE original_size_eth IS NULL`,
+      );
+    }
+    if (!hasPos("original_token_amount")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN original_token_amount TEXT`);
+      this.db.exec(
+        `UPDATE positions SET original_token_amount = token_amount WHERE original_token_amount IS NULL`,
+      );
+    }
+    if (!hasPos("peak_price_eth")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN peak_price_eth REAL`);
+      this.db.exec(
+        `UPDATE positions SET peak_price_eth = entry_price_eth WHERE peak_price_eth IS NULL`,
+      );
+    }
+    if (!hasPos("realized_partial_pnl_eth")) {
+      this.db.exec(
+        `ALTER TABLE positions ADD COLUMN realized_partial_pnl_eth REAL NOT NULL DEFAULT 0`,
+      );
+    }
+    if (!hasPos("moon_trim_mask")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN moon_trim_mask INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!hasPos("moon_reasons")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN moon_reasons TEXT`);
+    }
+    if (!hasPos("moon_flagged_at")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN moon_flagged_at TEXT`);
+    }
+    if (!hasPos("breakeven_stop")) {
+      this.db.exec(`ALTER TABLE positions ADD COLUMN breakeven_stop INTEGER NOT NULL DEFAULT 0`);
+    }
   }
 
   insertSignal(input: Omit<SignalRow, "id" | "created_at"> & { created_at?: string }): number {
@@ -243,19 +300,135 @@ export class BotDb {
       | "pnl_pct"
       | "exit_tx"
       | "opened_at"
+      | "book"
+      | "original_size_eth"
+      | "original_token_amount"
+      | "peak_price_eth"
+      | "realized_partial_pnl_eth"
+      | "moon_trim_mask"
+      | "moon_reasons"
+      | "moon_flagged_at"
+      | "breakeven_stop"
     > & {
       opened_at?: string;
+      book?: PositionBook;
     },
   ): number {
     const opened_at = input.opened_at ?? new Date().toISOString();
     const result = this.db
       .prepare(
         `INSERT INTO positions
-          (mode, status, token, symbol, dex, pair_or_pool, fee, entry_price_eth, size_eth, token_amount, opened_at, entry_tx, signal_id)
-         VALUES (@mode, 'open', @token, @symbol, @dex, @pair_or_pool, @fee, @entry_price_eth, @size_eth, @token_amount, @opened_at, @entry_tx, @signal_id)`,
+          (mode, status, token, symbol, dex, pair_or_pool, fee, entry_price_eth, size_eth, token_amount,
+           opened_at, entry_tx, signal_id, book, original_size_eth, original_token_amount,
+           peak_price_eth, realized_partial_pnl_eth, moon_trim_mask, breakeven_stop)
+         VALUES (@mode, 'open', @token, @symbol, @dex, @pair_or_pool, @fee, @entry_price_eth, @size_eth, @token_amount,
+           @opened_at, @entry_tx, @signal_id, @book, @original_size_eth, @original_token_amount,
+           @peak_price_eth, 0, 0, 0)`,
       )
-      .run({ ...input, opened_at });
+      .run({
+        ...input,
+        opened_at,
+        book: input.book ?? "scout",
+        original_size_eth: input.size_eth,
+        original_token_amount: input.token_amount,
+        peak_price_eth: input.entry_price_eth,
+      });
     return Number(result.lastInsertRowid);
+  }
+
+  promoteToMoon(id: number, reasons: string): void {
+    this.db
+      .prepare(
+        `UPDATE positions SET
+          book = 'moon',
+          moon_reasons = @reasons,
+          moon_flagged_at = @at
+         WHERE id = @id AND status = 'open' AND book = 'scout'`,
+      )
+      .run({ id, reasons, at: new Date().toISOString() });
+  }
+
+  updatePositionPeak(id: number, peakPriceEth: number): void {
+    this.db
+      .prepare(
+        `UPDATE positions SET peak_price_eth = @peak
+         WHERE id = @id AND status = 'open' AND @peak > COALESCE(peak_price_eth, 0)`,
+      )
+      .run({ id, peak: peakPriceEth });
+  }
+
+  /**
+   * Reduce an open position after a scale-out trim. Returns false if nothing left / not open.
+   */
+  applyPartialExit(
+    id: number,
+    fields: {
+      sizeEthSold: number;
+      tokenAmountSold: bigint;
+      trimBit: number;
+      pnlEth: number;
+      exitPriceEth: number;
+      armBreakeven: boolean;
+    },
+  ): { remainingSizeEth: number; remainingTokens: bigint } | null {
+    const pos = this.getPosition(id);
+    if (!pos || pos.status !== "open") return null;
+
+    const remTokens = BigInt(pos.token_amount || "0");
+    const soldTokens =
+      fields.tokenAmountSold > remTokens ? remTokens : fields.tokenAmountSold;
+    const remSize = Math.max(0, pos.size_eth - fields.sizeEthSold);
+    const nextTokens = remTokens - soldTokens;
+    const mask = (pos.moon_trim_mask ?? 0) | (1 << fields.trimBit);
+    const realized = (pos.realized_partial_pnl_eth ?? 0) + fields.pnlEth;
+
+    this.db
+      .prepare(
+        `UPDATE positions SET
+          size_eth = @size_eth,
+          token_amount = @token_amount,
+          moon_trim_mask = @mask,
+          realized_partial_pnl_eth = @realized,
+          breakeven_stop = CASE WHEN @arm > 0 THEN 1 ELSE breakeven_stop END,
+          exit_price_eth = @exit_price,
+          pnl_eth = @realized,
+          pnl_pct = @pnl_pct
+         WHERE id = @id AND status = 'open'`,
+      )
+      .run({
+        id,
+        size_eth: remSize,
+        token_amount: nextTokens.toString(),
+        mask,
+        realized,
+        arm: fields.armBreakeven ? 1 : 0,
+        exit_price: fields.exitPriceEth,
+        pnl_pct:
+          pos.original_size_eth > 0
+            ? (realized / pos.original_size_eth) * 100
+            : 0,
+      });
+
+    return { remainingSizeEth: remSize, remainingTokens: nextTokens };
+  }
+
+  countOpenMoonPositions(mode: ExecutionMode): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions
+           WHERE status = 'open' AND mode = ? AND book = 'moon'`,
+        )
+        .get(mode) as { c: number }
+    ).c;
+  }
+
+  getSignalSource(signalId: number | null): string | null {
+    if (signalId == null) return null;
+    const row = this.db
+      .prepare(`SELECT source FROM signals WHERE id = ?`)
+      .get(signalId) as { source: string | null } | undefined;
+    return row?.source ?? null;
   }
 
   closePosition(
@@ -487,18 +660,35 @@ export class BotDb {
     wins: number;
     losses: number;
     realized_pnl_eth: number;
+    moon_open: number;
   } {
     const open = (
       this.db
         .prepare(`SELECT COUNT(*) AS c FROM positions WHERE status = 'open' AND mode = 'paper'`)
         .get() as { c: number }
     ).c;
+    const moonOpen = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions WHERE status = 'open' AND mode = 'paper' AND book = 'moon'`,
+        )
+        .get() as { c: number }
+    ).c;
     const closedRows = this.db
       .prepare(`SELECT pnl_eth FROM positions WHERE status = 'closed' AND mode = 'paper'`)
       .all() as { pnl_eth: number | null }[];
+    // Partials already banked on still-open moon positions
+    const openPartials = (
+      this.db
+        .prepare(
+          `SELECT COALESCE(SUM(realized_partial_pnl_eth), 0) AS s
+           FROM positions WHERE status = 'open' AND mode = 'paper'`,
+        )
+        .get() as { s: number }
+    ).s;
     let wins = 0;
     let losses = 0;
-    let realized = 0;
+    let realized = openPartials;
     for (const r of closedRows) {
       const pnl = r.pnl_eth ?? 0;
       realized += pnl;
@@ -511,6 +701,7 @@ export class BotDb {
       wins,
       losses,
       realized_pnl_eth: realized,
+      moon_open: moonOpen,
     };
   }
 

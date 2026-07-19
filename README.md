@@ -62,6 +62,20 @@ Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool d
 - Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.55**)
 - At most `MAX_TRENDING_OPEN_POSITIONS` (default **3**) of your open slots may be trending/boost
 
+### Moon / runner book (stay past +65%)
+
+Early entry is unchanged — launches still open on the **scout** book with the normal scan.
+
+If a scout position shows early strength (launch source + ≈+35% within 40m, optional DexPaprika momentum), it upgrades to **moon**:
+
+1. Sell ~35% at the normal TP (+65%) — bank a free ride  
+2. Stop moves to breakeven on the rest  
+3. Optional trims at +2× / +5× / +10×  
+4. Trail the remainder (default giveback 30 points from peak PnL)  
+5. Max hold lifted to `MOON_MAX_HOLD_MINUTES` (default 24h; `0` = none)
+
+At most `MAX_MOON_POSITIONS` (default **2**) runners at once. Website/X scoring can plug into moon detect later; v1 is onchain-only.
+
 ### Overnight edge rules (paper training)
 
 Tuned from closed-trade analysis (prefer boost + mid-liq; avoid late majors):

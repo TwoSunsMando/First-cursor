@@ -5,7 +5,7 @@ import {
   type Hash,
 } from "viem";
 import type { AppConfig } from "../config.js";
-import type { BotDb, DexKind } from "../db/schema.js";
+import type { BotDb, DexKind, PositionRow } from "../db/schema.js";
 import type { CandidateToken } from "../risk/filters.js";
 import { ADDRESSES, EXPLORER_TX } from "../chain/addresses.js";
 import {
@@ -20,6 +20,9 @@ import {
   readTokenMeta,
 } from "../chain/pricing.js";
 import { formatPnl, getEthUsd } from "../util/money.js";
+import { fetchTokenMomentumExtras } from "../ingest/dexpaprika.js";
+import { evaluateMoonUpgrade } from "../moon/detect.js";
+import { decideMoonExit, decideScoutExit } from "../moon/exits.js";
 
 function logLine(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -217,7 +220,8 @@ export class LiveGateway {
 
   async maybeRequestSellApprovals(): Promise<void> {
     const opens = this.db.listOpenPositions("live");
-    for (const pos of opens) {
+    const ethUsd = opens.length ? await getEthUsd().catch(() => 0) : 0;
+    for (let pos of opens) {
       const meta = await readTokenMeta(this.publicClient, pos.token as Address);
       const price =
         (await quoteTokenPriceEth(
@@ -229,44 +233,133 @@ export class LiveGateway {
           meta.decimals,
         )) ?? pos.entry_price_eth;
 
+      this.db.updatePositionPeak(pos.id, price);
+      pos = {
+        ...pos,
+        peak_price_eth: Math.max(pos.peak_price_eth || pos.entry_price_eth, price),
+      };
+
       const pnlPct =
         pos.entry_price_eth > 0
           ? ((price - pos.entry_price_eth) / pos.entry_price_eth) * 100
           : 0;
       const holdMin = (Date.now() - Date.parse(pos.opened_at)) / 60_000;
 
-      let reason: string | null = null;
-      if (pnlPct >= this.config.TAKE_PROFIT_PERCENT) reason = `take_profit ${pnlPct.toFixed(1)}%`;
-      else if (pnlPct <= -this.config.STOP_LOSS_PERCENT)
-        reason = `stop_loss ${pnlPct.toFixed(1)}%`;
-      else if (holdMin >= this.config.MAX_HOLD_MINUTES)
-        reason = `max_hold ${holdMin.toFixed(0)}m`;
+      if ((pos.book ?? "scout") === "scout" && this.config.MOON_ENABLED) {
+        const source = this.db.getSignalSource(pos.signal_id);
+        const extras = await fetchTokenMomentumExtras(pos.token, ethUsd || undefined);
+        const evalMoon = evaluateMoonUpgrade(
+          pos,
+          source,
+          pnlPct,
+          holdMin,
+          extras,
+          this.config,
+          this.db,
+          "live",
+        );
+        if (evalMoon.promote) {
+          const why = evalMoon.reasons.join("; ");
+          this.db.promoteToMoon(pos.id, why);
+          pos = { ...pos, book: "moon", moon_reasons: why };
+          logLine(
+            `MOON UPGRADE #${pos.id} ${pos.symbol} score=${evalMoon.score} — ${why}`,
+          );
+        }
+      }
 
-      if (!reason) continue;
+      if ((pos.book ?? "scout") === "moon") {
+        await this.handleMoonLive(pos, price, pnlPct, holdMin);
+        continue;
+      }
 
+      const scout = decideScoutExit(pnlPct, holdMin, this.config);
+      if (!scout) continue;
+      await this.requestOrExecuteSell(pos.id, scout.reason, pos.size_eth);
+    }
+  }
+
+  private async handleMoonLive(
+    pos: PositionRow,
+    price: number,
+    pnlPct: number,
+    holdMin: number,
+  ): Promise<void> {
+    for (let i = 0; i < 4; i++) {
+      const current = this.db.getPosition(pos.id);
+      if (!current || current.status !== "open") return;
+      const action = decideMoonExit(current, price, pnlPct, holdMin, this.config);
+      if (action.kind === "none") return;
+      if (action.kind === "close") {
+        await this.requestOrExecuteSell(current.id, action.reason, current.size_eth);
+        return;
+      }
+      const originalSize = current.original_size_eth || current.size_eth;
+      const originalTokens = BigInt(
+        current.original_token_amount || current.token_amount || "0",
+      );
+      let sizeSold = originalSize * action.fractionOfOriginal;
+      if (sizeSold > current.size_eth) sizeSold = current.size_eth;
+      let tokensSold = 0n;
+      if (originalTokens > 0n) {
+        tokensSold =
+          (originalTokens * BigInt(Math.round(action.fractionOfOriginal * 1_000_000))) /
+          1_000_000n;
+        const rem = BigInt(current.token_amount || "0");
+        if (tokensSold > rem) tokensSold = rem;
+      }
       if (this.config.AUTO_SELL) {
-        logLine(`AUTO_SELL #${pos.id} ${pos.symbol} ${reason}`);
-        await this.executeSellPosition(pos.id, reason);
-      } else {
-        const expires = new Date(
-          Date.now() + this.config.APPROVAL_TTL_SECONDS * 1000,
-        ).toISOString();
-        const id = this.db.createApproval({
-          expires_at: expires,
-          side: "sell",
-          token: pos.token,
-          symbol: pos.symbol,
-          dex: pos.dex,
-          pair_or_pool: pos.pair_or_pool,
-          fee: pos.fee,
-          size_eth: pos.size_eth,
-          position_id: pos.id,
-          notes: reason,
+        logLine(`AUTO_SELL TRIM #${current.id} ${current.symbol} ${action.reason}`);
+        await this.executeSellPosition(current.id, action.reason, undefined, {
+          tokenAmount: tokensSold,
+          sizeEthSold: sizeSold,
+          trimBit: action.trimBit,
+          armBreakeven: action.armBreakeven,
+          pnlPct,
         });
-        logLine(`SELL APPROVAL NEEDED #${id} for position #${pos.id}: ${reason}`);
-        logLine(`  → npm run approve -- ${id}`);
+      } else {
+        await this.requestOrExecuteSell(
+          current.id,
+          action.reason,
+          sizeSold,
+          /* forceApproval */ true,
+        );
+        // Without AUTO_SELL, wait for human — don't loop more trims
+        return;
       }
     }
+  }
+
+  private async requestOrExecuteSell(
+    positionId: number,
+    reason: string,
+    sizeEth: number,
+    forceApproval = false,
+  ): Promise<void> {
+    if (this.config.AUTO_SELL && !forceApproval) {
+      logLine(`AUTO_SELL #${positionId} ${reason}`);
+      await this.executeSellPosition(positionId, reason);
+      return;
+    }
+    const pos = this.db.getPosition(positionId);
+    if (!pos) return;
+    const expires = new Date(
+      Date.now() + this.config.APPROVAL_TTL_SECONDS * 1000,
+    ).toISOString();
+    const id = this.db.createApproval({
+      expires_at: expires,
+      side: "sell",
+      token: pos.token,
+      symbol: pos.symbol,
+      dex: pos.dex,
+      pair_or_pool: pos.pair_or_pool,
+      fee: pos.fee,
+      size_eth: sizeEth,
+      position_id: pos.id,
+      notes: reason,
+    });
+    logLine(`SELL APPROVAL NEEDED #${id} for position #${pos.id}: ${reason}`);
+    logLine(`  → npm run approve -- ${id}`);
   }
 
   private async executeSell(approvalId: number): Promise<void> {
@@ -279,6 +372,13 @@ export class LiveGateway {
     positionId: number,
     reason: string,
     approvalId?: number,
+    partial?: {
+      tokenAmount: bigint;
+      sizeEthSold: number;
+      trimBit: number;
+      armBreakeven: boolean;
+      pnlPct: number;
+    },
   ): Promise<void> {
     const pos = this.db.getPosition(positionId);
     if (!pos || pos.status !== "open" || pos.mode !== "live") {
@@ -287,12 +387,17 @@ export class LiveGateway {
 
     const account = this.walletClient.account.address;
     const token = pos.token as Address;
-    const amountIn = BigInt(pos.token_amount);
+    const fullAmount = BigInt(pos.token_amount);
+    const amountIn =
+      partial && partial.tokenAmount > 0n && partial.tokenAmount < fullAmount
+        ? partial.tokenAmount
+        : fullAmount;
+    const isPartial = Boolean(partial) && amountIn < fullAmount;
     if (amountIn === 0n) {
       this.db.closePosition(positionId, {
         exit_price_eth: 0,
         exit_reason: `${reason} (zero balance)`,
-        pnl_eth: -pos.size_eth,
+        pnl_eth: -(pos.original_size_eth || pos.size_eth),
         pnl_pct: -100,
       });
       return;
@@ -385,28 +490,67 @@ export class LiveGateway {
         meta.decimals,
       )) ?? expectedEth;
     const pnlPct =
-      pos.entry_price_eth > 0
+      partial?.pnlPct ??
+      (pos.entry_price_eth > 0
         ? ((exitPrice - pos.entry_price_eth) / pos.entry_price_eth) * 100
-        : 0;
-    const pnlEth = (pnlPct / 100) * pos.size_eth;
-
-    this.db.closePosition(positionId, {
-      exit_price_eth: exitPrice,
-      exit_reason: reason,
-      pnl_eth: pnlEth,
-      pnl_pct: pnlPct,
-      exit_tx: txHash,
-    });
+        : 0);
 
     if (approvalId !== undefined) {
       this.db.setApprovalStatus(approvalId, "executed", { executed_tx: txHash });
     }
 
     const ethUsd = await getEthUsd().catch(() => 0);
+
+    if (isPartial && partial) {
+      const trimPnl = (pnlPct / 100) * partial.sizeEthSold;
+      const applied = this.db.applyPartialExit(positionId, {
+        sizeEthSold: partial.sizeEthSold,
+        tokenAmountSold: amountIn,
+        trimBit: partial.trimBit,
+        pnlEth: trimPnl,
+        exitPriceEth: exitPrice,
+        armBreakeven: partial.armBreakeven,
+      });
+      const pnlLabel =
+        ethUsd > 0 ? formatPnl(trimPnl, ethUsd, pnlPct) : `${trimPnl.toFixed(5)} ETH`;
+      logLine(
+        `LIVE TRIM #${positionId} ${pos.symbol} ${reason} banked=${pnlLabel} out≈${formatEther(expectedOutWei)} ETH` +
+          (applied ? ` rem=${applied.remainingSizeEth.toFixed(4)} ETH` : ""),
+      );
+      if (applied && (applied.remainingSizeEth <= 1e-12 || applied.remainingTokens === 0n)) {
+        const refreshed = this.db.getPosition(positionId);
+        if (refreshed?.status === "open") {
+          const total = refreshed.realized_partial_pnl_eth ?? 0;
+          const orig = refreshed.original_size_eth || pos.size_eth;
+          this.db.closePosition(positionId, {
+            exit_price_eth: exitPrice,
+            exit_reason: `${reason} (flat)`,
+            pnl_eth: total,
+            pnl_pct: orig > 0 ? (total / orig) * 100 : pnlPct,
+            exit_tx: txHash,
+          });
+        }
+      }
+      return;
+    }
+
+    const remPnl = (pnlPct / 100) * pos.size_eth;
+    const totalPnl = (pos.realized_partial_pnl_eth ?? 0) + remPnl;
+    const orig = pos.original_size_eth || pos.size_eth;
+    const totalPct = orig > 0 ? (totalPnl / orig) * 100 : pnlPct;
+
+    this.db.closePosition(positionId, {
+      exit_price_eth: exitPrice,
+      exit_reason: reason,
+      pnl_eth: totalPnl,
+      pnl_pct: totalPct,
+      exit_tx: txHash,
+    });
+
     const pnlLabel =
       ethUsd > 0
-        ? formatPnl(pnlEth, ethUsd, pnlPct)
-        : `${pnlEth.toFixed(5)} ETH (${pnlPct.toFixed(1)}%)`;
+        ? formatPnl(totalPnl, ethUsd, totalPct)
+        : `${totalPnl.toFixed(5)} ETH (${totalPct.toFixed(1)}%)`;
     logLine(
       `LIVE CLOSE #${positionId} ${pos.symbol} ${reason} pnl=${pnlLabel} out≈${formatEther(expectedOutWei)} ETH`,
     );

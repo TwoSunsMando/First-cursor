@@ -104,6 +104,39 @@ const ConfigSchema = z
     CHOP_STREAK: z.coerce.number().int().positive().default(2),
     REENTRY_AFTER_CHOP_MS: z.coerce.number().int().nonnegative().default(48 * 60 * 60 * 1000),
 
+    /**
+     * Moon / runner book: early entry stays scout; upgrade in-position to
+     * scale-out + trail instead of full +TAKE_PROFIT dump.
+     */
+    MOON_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    MAX_MOON_POSITIONS: z.coerce.number().int().nonnegative().default(2),
+    /** Min unrealized PnL% before a scout can promote to moon. */
+    MOON_ARM_PNL_PCT: z.coerce.number().nonnegative().default(35),
+    /** Extra arm strength (helps boost exceptions / score). */
+    MOON_ARM_STRONG_PNL_PCT: z.coerce.number().nonnegative().default(55),
+    /** Max age (minutes) to still consider “early” for moon upgrade. */
+    MOON_MAX_AGE_MINUTES: z.coerce.number().int().positive().default(40),
+    /** Min moon detect score (launch sources need this; others need +2). */
+    MOON_MIN_SCORE: z.coerce.number().int().positive().default(3),
+    /** First trim at TAKE_PROFIT — % of original size. */
+    MOON_TRIM_TP_PCT: z.coerce.number().min(0).max(100).default(35),
+    MOON_TRIM_2X_PCT_TRIGGER: z.coerce.number().positive().default(200),
+    MOON_TRIM_2X_PCT: z.coerce.number().min(0).max(100).default(15),
+    MOON_TRIM_5X_PCT_TRIGGER: z.coerce.number().positive().default(500),
+    MOON_TRIM_5X_PCT: z.coerce.number().min(0).max(100).default(15),
+    MOON_TRIM_10X_PCT_TRIGGER: z.coerce.number().positive().default(1000),
+    MOON_TRIM_10X_PCT: z.coerce.number().min(0).max(100).default(15),
+    /** Close remainder when PnL giveback from peak reaches this many points. */
+    MOON_TRAIL_GIVEBACK_PCT: z.coerce.number().positive().default(30),
+    /** Soft ceiling for moon holds (minutes). 0 = no max hold. */
+    MOON_MAX_HOLD_MINUTES: z.coerce.number().int().nonnegative().default(24 * 60),
+
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
     MAX_DAILY_ETH: z.coerce.number().positive().default(0.05),

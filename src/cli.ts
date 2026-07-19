@@ -65,6 +65,13 @@ async function cmdScan() {
   console.log(
     `trending weights: momentum×${config.TRENDING_MOMENTUM_SCALE} maxOpen=${config.MAX_TRENDING_OPEN_POSITIONS}/${config.MAX_OPEN_POSITIONS}`,
   );
+  if (config.MOON_ENABLED) {
+    console.log(
+      `moon runners: on (max=${config.MAX_MOON_POSITIONS}, arm≥${config.MOON_ARM_PNL_PCT}%, trim@${config.TAKE_PROFIT_PERCENT}%→${config.MOON_TRIM_TP_PCT}% size, trail giveback ${config.MOON_TRAIL_GIVEBACK_PCT}%)`,
+    );
+  } else {
+    console.log("moon runners: off");
+  }
   if (config.LEARNING_MODE) {
     if (config.EXECUTION_MODE !== "paper") {
       console.warn("LEARNING_MODE is set but EXECUTION_MODE is not paper — lessons will not apply");
@@ -139,6 +146,9 @@ async function cmdStatus() {
   console.log(`mode:           ${config.EXECUTION_MODE}`);
   console.log(`learning:       ${config.LEARNING_MODE ? "on" : "off"} (${activeLessons} active lessons)`);
   console.log(`trending:       ${config.TRENDING_ENABLED ? "on" : "off"} (DexPaprika)`);
+  console.log(
+    `moon:           ${config.MOON_ENABLED ? `on (max ${config.MAX_MOON_POSITIONS})` : "off"}`,
+  );
   console.log(`rpc:            ${config.RPC_URL}`);
   console.log(`wss:            ${config.wssRpcUrl ?? "(http poll fallback)"}`);
   if (ethUsd > 0) console.log(`ETH price:      $${ethUsd.toFixed(2)}`);
@@ -197,10 +207,16 @@ async function cmdPositions() {
   for (const p of opens) {
     const size =
       ethUsd > 0 ? formatEthUsdSize(p.size_eth, ethUsd) : `${p.size_eth} ETH`;
+    const book = p.book ?? "scout";
+    const moonExtra =
+      book === "moon"
+        ? ` trims=0b${(p.moon_trim_mask ?? 0).toString(2)} peak=${p.peak_price_eth} partial=${(p.realized_partial_pnl_eth ?? 0).toFixed(5)} ETH`
+        : "";
     console.log(
-      `#${p.id} [${p.mode}] ${p.symbol} ${p.token}\n` +
-        `  size=${size} entry=${p.entry_price_eth} dex=${p.dex} opened=${p.opened_at}`,
+      `#${p.id} [${p.mode}/${book}] ${p.symbol} ${p.token}\n` +
+        `  size=${size} entry=${p.entry_price_eth} dex=${p.dex} opened=${p.opened_at}${moonExtra}`,
     );
+    if (p.moon_reasons) console.log(`  moon: ${p.moon_reasons}`);
   }
   db.close();
 }

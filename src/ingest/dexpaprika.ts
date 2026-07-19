@@ -85,6 +85,30 @@ export async function fetchToken(address: string): Promise<DexPaprikaTokenSummar
   );
 }
 
+/** Short-window momentum for open-position moon detection (best-effort). */
+export async function fetchTokenMomentumExtras(
+  token: string,
+  wethPriceUsd?: number,
+): Promise<ScoreExtras> {
+  try {
+    const ethUsd = wethPriceUsd && wethPriceUsd > 0 ? wethPriceUsd : await fetchWethPriceUsd();
+    const meta = await fetchToken(token);
+    const w15 = meta.summary?.["15m"];
+    const w1h = meta.summary?.["1h"];
+    const volumeUsd15m = w15?.volume_usd ?? 0;
+    return {
+      volumeEth15m: ethUsd > 0 ? volumeUsd15m / ethUsd : 0,
+      uniqueBuyers: w15?.buys ?? w1h?.buys ?? 0,
+      volumeUsd24h: meta.summary?.["24h"]?.volume_usd ?? 0,
+      priceChange15mPct: w15?.last_price_usd_change ?? null,
+      priceChange1hPct: w1h?.last_price_usd_change ?? null,
+      txns24h: meta.summary?.["24h"]?.txns ?? 0,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export async function fetchWethPriceUsd(): Promise<number> {
   try {
     const tok = await fetchToken(ADDRESSES.WETH);
