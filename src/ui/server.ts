@@ -190,7 +190,9 @@ async function handleApi(
       await runner.approveOrder(id);
       sendJson(res, 200, { ok: true, id, action: "approved" });
     } catch (err) {
-      sendJson(res, 400, { error: (err as Error).message });
+      const msg = (err as Error).message;
+      console.error(`[ui] approve #${id} failed: ${msg}`);
+      sendJson(res, 400, { error: msg });
     }
     return;
   }

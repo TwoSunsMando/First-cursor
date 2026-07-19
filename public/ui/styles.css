@@ -403,6 +403,54 @@ footer {
   color: var(--stop);
 }
 
+.err-banner {
+  position: fixed;
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 50;
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(232, 93, 76, 0.55);
+  background: rgba(40, 14, 12, 0.96);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.err-banner.hidden {
+  display: none;
+}
+
+.err-banner strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #ffb4aa;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.err-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #ffd4ce;
+  max-width: 70vw;
+}
+
+.err-banner-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
 @media (max-width: 900px) {
   .strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));

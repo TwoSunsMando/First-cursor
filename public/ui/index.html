@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=5" />
+    <link rel="stylesheet" href="/styles.css?v=6" />
   </head>
   <body>
     <div class="bg"></div>
@@ -141,8 +141,17 @@
 
     <footer>
       <span id="updated">—</span>
-      <span id="err" class="err"></span>
     </footer>
-    <script src="/app.js?v=5"></script>
+    <div id="errBanner" class="err-banner hidden" role="alert">
+      <div class="err-banner-body">
+        <strong>Error</strong>
+        <pre id="err" class="err-text"></pre>
+      </div>
+      <div class="err-banner-actions">
+        <button type="button" class="btn" id="btnCopyErr">Copy</button>
+        <button type="button" class="btn" id="btnDismissErr">Dismiss</button>
+      </div>
+    </div>
+    <script src="/app.js?v=6"></script>
   </body>
 </html>

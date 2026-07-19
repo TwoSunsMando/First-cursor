@@ -22,9 +22,59 @@ const els = {
   orderBody: $("orderBody"),
   updated: $("updated"),
   err: $("err"),
+  errBanner: $("errBanner"),
+  btnCopyErr: $("btnCopyErr"),
+  btnDismissErr: $("btnDismissErr"),
 };
 
 let busy = false;
+/** Sticky UI error — not wiped by the 3s dashboard refresh. */
+let stickyError = "";
+let stickyUntil = 0;
+
+function showError(msg, holdMs = 120_000) {
+  stickyError = String(msg || "").trim();
+  stickyUntil = Date.now() + holdMs;
+  if (!stickyError) {
+    hideError();
+    return;
+  }
+  console.error("[rh-bot]", stickyError);
+  els.err.textContent = stickyError;
+  els.errBanner.classList.remove("hidden");
+}
+
+function hideError() {
+  stickyError = "";
+  stickyUntil = 0;
+  els.err.textContent = "";
+  els.errBanner.classList.add("hidden");
+}
+
+function paintStickyError() {
+  if (stickyError && Date.now() < stickyUntil) {
+    els.err.textContent = stickyError;
+    els.errBanner.classList.remove("hidden");
+    return true;
+  }
+  if (stickyError && Date.now() >= stickyUntil) {
+    hideError();
+  }
+  return false;
+}
+
+els.btnDismissErr?.addEventListener("click", () => hideError());
+els.btnCopyErr?.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(stickyError || els.err.textContent || "");
+    els.btnCopyErr.textContent = "Copied";
+    setTimeout(() => {
+      els.btnCopyErr.textContent = "Copy";
+    }, 1500);
+  } catch {
+    /* ignore */
+  }
+});
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -118,13 +168,13 @@ els.posBody.addEventListener("click", async (e) => {
   }
   busy = true;
   btn.disabled = true;
-  els.err.textContent = `Clearing #${id}…`;
+  showError(`Clearing #${id}…`, 10_000);
   try {
     await api(`/api/positions/${id}/writeoff`, { method: "POST", body: "{}" });
-    els.err.textContent = `Cleared #${id} (write-off)`;
+    showError(`Cleared #${id} (write-off)`, 15_000);
     await refresh();
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message);
     btn.disabled = false;
   } finally {
     busy = false;
@@ -169,13 +219,13 @@ els.orderBody.addEventListener("click", async (e) => {
 
   busy = true;
   btn.disabled = true;
-  els.err.textContent = action === "approve" ? `Approving #${id}…` : `Rejecting #${id}…`;
+  showError(action === "approve" ? `Approving #${id}…` : `Rejecting #${id}…`, 10_000);
   try {
     await api(`/api/orders/${id}/${action}`, { method: "POST", body: "{}" });
-    els.err.textContent = action === "approve" ? `Approved #${id}` : `Rejected #${id}`;
+    showError(action === "approve" ? `Approved #${id}` : `Rejected #${id}`, 20_000);
     await refresh();
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message, 300_000);
     btn.disabled = false;
   } finally {
     busy = false;
@@ -193,7 +243,11 @@ function escapeHtml(s) {
 async function refresh() {
   try {
     const data = await api("/api/dashboard");
-    els.err.textContent = data.heartbeat?.error || "";
+    // Don't wipe approve/reject errors on the 3s poll
+    if (!paintStickyError()) {
+      if (data.heartbeat?.error) showError(data.heartbeat.error, 60_000);
+      else hideError();
+    }
     setHeartbeat(data.heartbeat);
     fillParams(data.params);
     const mode = String(data.mode || data.heartbeat?.mode || "paper").toLowerCase();
@@ -226,7 +280,7 @@ async function refresh() {
     renderOrders(data.orders);
     els.updated.textContent = `updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message);
   }
 }
 
@@ -238,7 +292,7 @@ els.btnStart.addEventListener("click", async () => {
     setHeartbeat(hb);
     await refresh();
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message);
   } finally {
     busy = false;
   }
@@ -252,7 +306,7 @@ els.btnStop.addEventListener("click", async () => {
     setHeartbeat(hb);
     await refresh();
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message);
   } finally {
     busy = false;
   }
@@ -272,7 +326,7 @@ els.paramForm.addEventListener("submit", async (e) => {
     fillParams(next);
     els.paramHint.textContent = `Saved · TP ${next.TAKE_PROFIT_PERCENT}% / SL ${next.STOP_LOSS_PERCENT}% / hold ${next.MAX_HOLD_MINUTES}m / max ${next.MAX_OPEN_POSITIONS}`;
   } catch (err) {
-    els.err.textContent = err.message;
+    showError(err.message);
   }
 });
 
