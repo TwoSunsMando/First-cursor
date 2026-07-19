@@ -57,8 +57,30 @@ export function startUiServer(opts: {
         return;
       }
 
-      const filePath =
-        path === "/" ? join(ROOT, "index.html") : join(ROOT, path.replace(/^\//, ""));
+      if (path === "/" || path === "/index.html") {
+        let html = await readFile(join(ROOT, "index.html"), "utf8");
+        const mode = config.EXECUTION_MODE;
+        html = html
+          .replace(/<title>.*?<\/title>/, `<title>${mode.toUpperCase()} · RH Chain Bot</title>`)
+          .replace(
+            '<span id="modeBadge" class="mode-badge">—</span>',
+            `<span id="modeBadge" class="mode-badge ${mode}">${mode.toUpperCase()}</span>`,
+          )
+          .replace(
+            '<span id="modeLabel">loading…</span>',
+            `<span id="modeLabel">server=${mode} · boot ${new Date().toISOString()}</span>`,
+          );
+        res.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store, no-cache, must-revalidate",
+          pragma: "no-cache",
+          "x-rh-mode": mode,
+        });
+        res.end(html);
+        return;
+      }
+
+      const filePath = join(ROOT, path.replace(/^\//, ""));
       if (!filePath.startsWith(ROOT)) {
         sendJson(res, 403, { error: "forbidden" });
         return;
@@ -108,6 +130,17 @@ async function handleApi(
 
   if (path === "/api/heartbeat" && method === "GET") {
     sendJson(res, 200, runner.getHeartbeat());
+    return;
+  }
+
+  if (path === "/api/mode" && method === "GET") {
+    sendJson(res, 200, {
+      mode: config.EXECUTION_MODE,
+      heartbeatMode: runner.getHeartbeat().mode,
+      pid: process.pid,
+      cwd: process.cwd(),
+      dbPath: config.DB_PATH,
+    });
     return;
   }
 

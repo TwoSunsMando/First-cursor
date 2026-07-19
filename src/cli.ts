@@ -67,11 +67,12 @@ async function cmdUi() {
   const runner = new BotRunner(config);
   applyRuntimeOverrides(runner.db, config);
 
-  const port = Number(process.env.UI_PORT || 8787);
-  const host = process.env.UI_HOST || "127.0.0.1";
+  const port = Number(process.env.UI_PORT || 8791);
+  const host = process.env.UI_HOST || "0.0.0.0";
   const server = await startUiServer({ config, runner, port, host });
 
-  console.log(`UI http://${server.host}:${server.port}`);
+  const openHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  console.log(`UI http://${openHost}:${server.port}`);
   if (config.EXECUTION_MODE === "live") {
     console.log("╔══════════════════════════════════════╗");
     console.log("║           MODE = LIVE                ║");
@@ -83,7 +84,9 @@ async function cmdUi() {
     console.log("│  Simulated only — no real orders     │");
     console.log("└──────────────────────────────────────┘");
   }
-  console.log("Use Start in the dashboard (or POST /api/start). Ctrl+C to stop.");
+  console.log(`pid=${process.pid} db=${config.DB_PATH}`);
+  console.log(`Check: curl -s http://127.0.0.1:${server.port}/api/mode`);
+  console.log("Use Start in the dashboard. Ctrl+C to stop.");
 
   const shutdown = async () => {
     console.log("shutting down…");
