@@ -33,7 +33,43 @@ const ConfigSchema = z
     TAKE_PROFIT_PERCENT: z.coerce.number().positive().default(65),
     STOP_LOSS_PERCENT: z.coerce.number().positive().default(15),
     MAX_HOLD_MINUTES: z.coerce.number().int().positive().default(45),
-    MIN_INITIAL_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.05),
+    MIN_INITIAL_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.25),
+    /**
+     * Stricter floor for launch sources (noxa / new V2 / new V3).
+     * Instant rugs often seed << this then pull.
+     */
+    MIN_LAUNCH_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.5),
+    /** If true, unknown (null) liquidity fails risk instead of passing. */
+    REJECT_NULL_LIQUIDITY: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    /**
+     * Require buy→sell quoter roundtrip before BUY (paper + live).
+     * Catches honeypots / unsellable tax tokens before entry.
+     */
+    REQUIRE_SELLABLE_QUOTE: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    /**
+     * Max implied roundtrip loss in bps (buy then sell same size).
+     * 2500 = 25%. Higher tax / failed exit → SKIP.
+     */
+    MAX_ROUNDTRIP_TAX_BPS: z.coerce.number().int().nonnegative().default(2500),
+    /**
+     * After PairCreated/PoolCreated, wait this many ms then re-read WETH in pool.
+     * Instant LP pulls show up as a sharp drop. 0 = disable.
+     */
+    LAUNCH_LIQ_SETTLE_MS: z.coerce.number().int().nonnegative().default(4000),
+    /** Fail settle if WETH dropped by this % or more vs first enrich. 0 = disable drop check. */
+    LAUNCH_LIQ_DROP_MAX_PCT: z.coerce.number().nonnegative().default(35),
     /**
      * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
      * Used for score sweet-spot bonus and BUY confirmation.

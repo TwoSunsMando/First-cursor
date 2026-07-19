@@ -23,6 +23,7 @@ import {
   readV2WethLiquidityEth,
   readV3WethLiquidityEth,
 } from "../chain/pricing.js";
+import { assertBuyGates } from "../risk/sellability.js";
 import type { PaperEngine } from "../paper/engine.js";
 import type { LiveGateway } from "../live/gateway.js";
 
@@ -49,17 +50,20 @@ export async function handleCandidate(
   paper: PaperEngine,
   live: LiveGateway | null,
   extras: ScoreExtras = {},
+  client?: RhPublicClient,
 ): Promise<void> {
   const mode = config.EXECUTION_MODE;
+  let working = candidate;
   const scoreWeights = {
     trendingMomentumScale: config.TRENDING_MOMENTUM_SCALE,
     preferredLiqMinEth: config.PREFERRED_LIQ_MIN_ETH,
     preferredLiqMaxEth: config.PREFERRED_LIQ_MAX_ETH,
     lateEntryVolEth15m: config.LATE_ENTRY_VOL_ETH_15M,
     lateEntryBuys: config.LATE_ENTRY_BUYS,
+    minLaunchLiqEth: config.MIN_LAUNCH_LIQUIDITY_ETH,
   };
   const scored = scoreCandidate(
-    candidate,
+    working,
     extras,
     {
       buy: config.BUY_SCORE_THRESHOLD,
@@ -72,7 +76,7 @@ export async function handleCandidate(
 
   // Learning Mode: adjust score from mined paper-trade lessons (paper path only).
   if (config.LEARNING_MODE && mode === "paper") {
-    const lesson = lessonScoreDeltaForCandidate(db, candidate, scored.score);
+    const lesson = lessonScoreDeltaForCandidate(db, working, scored.score);
     if (lesson.delta !== 0) {
       finalScore = scored.score + lesson.delta;
       reasons.push(
@@ -85,16 +89,16 @@ export async function handleCandidate(
   if (finalScore >= config.BUY_SCORE_THRESHOLD) action = "BUY";
   else if (finalScore >= config.WATCH_SCORE_THRESHOLD) action = "WATCH";
 
-  // Don't trust raw high score alone — need boost/new-pool, mid-liq, or moderate momentum.
+  // Don't trust raw high score alone — need boost, launch+liq, mid-liq, or moderate momentum.
   if (action === "BUY" && config.BUY_REQUIRE_CONFIRMING_EDGE) {
-    const edge = hasConfirmingEdge(candidate, extras, scoreWeights);
+    const edge = hasConfirmingEdge(working, extras, scoreWeights);
     if (!edge.ok) {
       action = "WATCH";
       reasons.push(`edge: ${edge.reason} — demoted to WATCH`);
     }
   }
 
-  const risk = applyRiskFilters(candidate, config, db, mode, extras);
+  const risk = applyRiskFilters(working, config, db, mode, extras);
   if (!risk.ok) {
     action = "SKIP";
     reasons.push(...risk.reasons.map((r) => `risk: ${r}`));
@@ -102,7 +106,7 @@ export async function handleCandidate(
 
   // Reserve most paper slots for new-pool discovery; trending is a spice, not the meal.
   const isTrendingSrc =
-    candidate.source === "trending" || candidate.source === "boost";
+    working.source === "trending" || working.source === "boost";
   if (
     action === "BUY" &&
     isTrendingSrc &&
@@ -114,41 +118,59 @@ export async function handleCandidate(
       `risk: trending open-slot cap (${config.MAX_TRENDING_OPEN_POSITIONS}) — demoted to WATCH`,
     );
   }
+
+  // Anti-instant-rug: settle launch liq + require buy→sell roundtrip before BUY.
+  if (action === "BUY" && client) {
+    const gates = await assertBuyGates(client, working, config);
+    working = gates.candidate;
+    reasons.push(...gates.reasons.map((r) => `gate: ${r}`));
+    if (!gates.ok) {
+      action = "SKIP";
+    }
+  } else if (
+    action === "BUY" &&
+    !client &&
+    (config.REQUIRE_SELLABLE_QUOTE || config.LAUNCH_LIQ_SETTLE_MS > 0)
+  ) {
+    action = "SKIP";
+    reasons.push("gate: no RPC client for sellable/settle checks");
+  }
+
   reasons.push(
     `final score=${finalScore} → ${action} (buy≥${config.BUY_SCORE_THRESHOLD}, watch≥${config.WATCH_SCORE_THRESHOLD})`,
   );
 
   const signalId = db.insertSignal({
-    token: candidate.token,
-    symbol: candidate.symbol,
-    name: candidate.name,
-    dex: candidate.dex,
-    pair_or_pool: candidate.pairOrPool,
-    fee: candidate.fee,
+    token: working.token,
+    symbol: working.symbol,
+    name: working.name,
+    dex: working.dex,
+    pair_or_pool: working.pairOrPool,
+    fee: working.fee,
     score: finalScore,
     action,
     reasons: reasons.join("; "),
-    initial_liquidity_eth: candidate.initialLiquidityEth,
-    tx_hash: candidate.txHash,
-    source: candidate.source,
+    initial_liquidity_eth: working.initialLiquidityEth,
+    tx_hash: working.txHash,
+    source: working.source,
   });
 
   logLine(
-    `SIGNAL ${action} ${candidate.symbol} (${candidate.token}) score=${finalScore.toFixed(1)} dex=${candidate.dex} #${signalId}`,
+    `SIGNAL ${action} ${working.symbol} (${working.token}) score=${finalScore.toFixed(1)} dex=${working.dex} #${signalId}`,
   );
-  for (const r of reasons.slice(0, 8)) {
+  for (const r of reasons.slice(0, 10)) {
     logLine(`  · ${r}`);
   }
 
   if (action !== "BUY") return;
 
   if (mode === "paper") {
-    await paper.tryOpenFromSignal(candidate, signalId);
+    await paper.tryOpenFromSignal(working, signalId);
     return;
   }
 
   if (live) {
-    await live.requestBuyApproval(candidate, signalId);
+    await live.requestBuyApproval(working, signalId);
   }
 }
 

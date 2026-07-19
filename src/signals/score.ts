@@ -28,6 +28,8 @@ export interface ScoreWeights {
   preferredLiqMaxEth?: number;
   lateEntryVolEth15m?: number;
   lateEntryBuys?: number;
+  /** Min WETH for launch sources to count as confirming edge. */
+  minLaunchLiqEth?: number;
 }
 
 export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
@@ -56,20 +58,43 @@ export function hasConfirmingEdge(
   extras: ScoreExtras = {},
   weights: Pick<
     ScoreWeights,
-    "preferredLiqMinEth" | "preferredLiqMaxEth" | "lateEntryVolEth15m" | "lateEntryBuys"
+    | "preferredLiqMinEth"
+    | "preferredLiqMaxEth"
+    | "lateEntryVolEth15m"
+    | "lateEntryBuys"
+    | "minLaunchLiqEth"
   > = {},
 ): { ok: boolean; reason: string } {
   const liqMin = weights.preferredLiqMinEth ?? 5;
   const liqMax = weights.preferredLiqMaxEth ?? 50;
   const lateVol = weights.lateEntryVolEth15m ?? 12;
   const lateBuys = weights.lateEntryBuys ?? 45;
+  const launchMin = weights.minLaunchLiqEth ?? 0.5;
   const liq = candidate.initialLiquidityEth;
   const vol = extras.volumeEth15m ?? 0;
   const buys = extras.uniqueBuyers ?? 0;
   const src = candidate.source;
 
-  if (src === "boost" || src === "noxa" || src === "uniswap_v2" || src === "uniswap_v3") {
-    return { ok: true, reason: `confirming source=${src}` };
+  // Boost still confirms (DexPaprika already saw activity).
+  if (src === "boost") {
+    return { ok: true, reason: "confirming source=boost" };
+  }
+
+  // Launch sources must prove real WETH — not a free pass for thin rugs.
+  if (src === "noxa" || src === "uniswap_v2" || src === "uniswap_v3") {
+    if (liq == null) {
+      return { ok: false, reason: `launch ${src}: liquidity unknown` };
+    }
+    if (liq < launchMin) {
+      return {
+        ok: false,
+        reason: `launch ${src}: liq ${liq.toFixed(3)} ETH < ${launchMin}`,
+      };
+    }
+    return {
+      ok: true,
+      reason: `confirming launch ${src} liq=${liq.toFixed(3)} ETH`,
+    };
   }
 
   if (liq != null && liq >= liqMin && liq < liqMax) {
@@ -89,7 +114,7 @@ export function hasConfirmingEdge(
   return {
     ok: false,
     reason:
-      "no confirming edge (need boost/new-pool, mid-liq 5–50, or moderate 15m momentum)",
+      "no confirming edge (need boost, launch+liq, mid-liq 5–50, or moderate 15m momentum)",
   };
 }
 
@@ -115,8 +140,11 @@ export function scoreCandidate(
   const lateBuys = weights.lateEntryBuys ?? 45;
 
   if (candidate.source === "noxa") {
-    score += 35;
-    reasons.push("NOXA launch (+35)");
+    // Thin NOXA seeds were a major instant-rug path — don't auto-BUY on name alone.
+    const noxaLiq = candidate.initialLiquidityEth ?? 0;
+    const noxaPts = noxaLiq >= 1 ? 28 : noxaLiq >= 0.5 ? 22 : 12;
+    score += noxaPts;
+    reasons.push(`NOXA launch (+${noxaPts}${noxaLiq < 0.5 ? " thin" : ""})`);
   } else if (candidate.source === "boost") {
     score += 18;
     reasons.push("recent boost (+18)");

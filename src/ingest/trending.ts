@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { BotDb } from "../db/schema.js";
 import type { PaperEngine } from "../paper/engine.js";
 import type { LiveGateway } from "../live/gateway.js";
+import type { RhPublicClient } from "../chain/client.js";
 import { handleCandidate } from "./watcher.js";
 import { collectTrendingHits, formatTrendingTable } from "./dexpaprika.js";
 
@@ -19,6 +20,7 @@ export function startTrendingPoller(
   db: BotDb,
   paper: PaperEngine,
   live: LiveGateway | null,
+  client?: RhPublicClient,
 ): () => void {
   if (!config.TRENDING_ENABLED) {
     logLine("trending poller disabled (TRENDING_ENABLED=false)");
@@ -57,7 +59,15 @@ export function startTrendingPoller(
         const prev = lastEmit.get(key) ?? 0;
         if (now - prev < cooldownMs) continue;
         lastEmit.set(key, now);
-        await handleCandidate(hit.candidate, config, db, paper, live, hit.extras);
+        await handleCandidate(
+          hit.candidate,
+          config,
+          db,
+          paper,
+          live,
+          hit.extras,
+          client,
+        );
         emitted += 1;
       }
       logLine(`trending emitted ${emitted}/${hits.length} (cooldown skipped rest)`);

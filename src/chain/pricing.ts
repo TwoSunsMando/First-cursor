@@ -105,6 +105,17 @@ export async function quoteTokenPriceEth(
   }
 }
 
+const V3_QUOTE_FEES = [10000, 3000, 500, 100] as const;
+
+function v3FeeAttempts(fee: number | null): number[] {
+  const out: number[] = [];
+  if (fee != null && Number.isFinite(fee)) out.push(Number(fee));
+  for (const f of V3_QUOTE_FEES) {
+    if (!out.includes(f)) out.push(f);
+  }
+  return out;
+}
+
 /** How many tokens you get for `ethIn` ETH (approx). */
 export async function quoteBuyTokensForEth(
   client: RhPublicClient,
@@ -116,22 +127,28 @@ export async function quoteBuyTokensForEth(
   try {
     const amountIn = parseEther(ethIn.toFixed(18));
     if (dex === "v3") {
-      const poolFee = fee ?? 10000;
-      const result = await client.simulateContract({
-        address: ADDRESSES.QUOTER_V2,
-        abi: quoterV2Abi,
-        functionName: "quoteExactInputSingle",
-        args: [
-          {
-            tokenIn: ADDRESSES.WETH,
-            tokenOut: token,
-            amountIn,
-            fee: poolFee,
-            sqrtPriceLimitX96: 0n,
-          },
-        ],
-      });
-      return result.result[0];
+      for (const poolFee of v3FeeAttempts(fee)) {
+        try {
+          const result = await client.simulateContract({
+            address: ADDRESSES.QUOTER_V2,
+            abi: quoterV2Abi,
+            functionName: "quoteExactInputSingle",
+            args: [
+              {
+                tokenIn: ADDRESSES.WETH,
+                tokenOut: token,
+                amountIn,
+                fee: poolFee,
+                sqrtPriceLimitX96: 0n,
+              },
+            ],
+          });
+          if (result.result[0] > 0n) return result.result[0];
+        } catch {
+          /* try next fee */
+        }
+      }
+      return null;
     }
 
     const amounts = await client.readContract({
@@ -139,6 +156,53 @@ export async function quoteBuyTokensForEth(
       abi: uniswapV2RouterAbi,
       functionName: "getAmountsOut",
       args: [amountIn, [ADDRESSES.WETH, token]],
+    });
+    return amounts[amounts.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+/** How much WETH/ETH you get selling `tokenAmount` raw units (approx). */
+export async function quoteSellEthForTokens(
+  client: RhPublicClient,
+  token: Address,
+  dex: DexKind,
+  fee: number | null,
+  tokenAmount: bigint,
+): Promise<bigint | null> {
+  if (tokenAmount <= 0n) return null;
+  try {
+    if (dex === "v3") {
+      for (const poolFee of v3FeeAttempts(fee)) {
+        try {
+          const result = await client.simulateContract({
+            address: ADDRESSES.QUOTER_V2,
+            abi: quoterV2Abi,
+            functionName: "quoteExactInputSingle",
+            args: [
+              {
+                tokenIn: token,
+                tokenOut: ADDRESSES.WETH,
+                amountIn: tokenAmount,
+                fee: poolFee,
+                sqrtPriceLimitX96: 0n,
+              },
+            ],
+          });
+          if (result.result[0] > 0n) return result.result[0];
+        } catch {
+          /* try next fee */
+        }
+      }
+      return null;
+    }
+
+    const amounts = await client.readContract({
+      address: ADDRESSES.UNISWAP_V2_ROUTER,
+      abi: uniswapV2RouterAbi,
+      functionName: "getAmountsOut",
+      args: [tokenAmount, [token, ADDRESSES.WETH]],
     });
     return amounts[amounts.length - 1];
   } catch {

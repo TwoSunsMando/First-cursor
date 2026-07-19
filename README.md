@@ -108,8 +108,22 @@ Tuned from closed-trade analysis (prefer boost + mid-liq; avoid late majors):
 | Mid-liq sweet spot | `PREFERRED_LIQ_MIN/MAX_ETH` = **5–50** (score bonus) |
 | Skip mega-liq trending | `SKIP_TRENDING_LIQ_ETH=50` |
 | Late-entry skip | 15m vol ≥ `LATE_ENTRY_VOL_ETH_15M` (12) or buys ≥ `LATE_ENTRY_BUYS` (45) |
-| Confirming edge for BUY | `BUY_REQUIRE_CONFIRMING_EDGE=true` — need boost/new-pool, mid-liq, or moderate momentum |
+| Confirming edge for BUY | `BUY_REQUIRE_CONFIRMING_EDGE=true` — need boost, **launch+liq**, mid-liq, or moderate momentum |
 | Dead-chop blacklist | 2× near-flat max-hold (`CHOP_FLAT_PNL_PCT=5`) → `REENTRY_AFTER_CHOP_MS` (48h) |
+
+### Anti–instant-rug gates (paper + live)
+
+Launches no longer auto-pass. Before BUY:
+
+| Gate | Default |
+|------|---------|
+| Reject unknown liq | `REJECT_NULL_LIQUIDITY=true` |
+| Min launch WETH | `MIN_LAUNCH_LIQUIDITY_ETH=0.5` |
+| Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS=4000` — fail if drop ≥ `LAUNCH_LIQ_DROP_MAX_PCT` (35%) |
+| Buy→sell quoter roundtrip | `REQUIRE_SELLABLE_QUOTE=true` — fail if unsellable or tax > `MAX_ROUNDTRIP_TAX_BPS` (2500 = 25%) |
+| Live re-check at Yes | same gates run again at execute (LP may vanish during approval TTL) |
+
+Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` in logs instead of opens.
 
 ### Re-entry guard (stop-loss / chop churn)
 

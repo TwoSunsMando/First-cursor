@@ -8,6 +8,7 @@ import {
   quoteTokenPriceEth,
   readTokenMeta,
 } from "../chain/pricing.js";
+import { checkSellableRoundtrip } from "../risk/sellability.js";
 import { formatEthUsdSize, formatPnl, getEthUsd } from "../util/money.js";
 import { fetchTokenMomentumExtras } from "../ingest/dexpaprika.js";
 import { evaluateMoonUpgrade } from "../moon/detect.js";
@@ -65,15 +66,28 @@ export class PaperEngine {
     }
 
     const sizeEth = this.config.PAPER_BUY_ETH;
+    const sellable = await checkSellableRoundtrip(
+      this.client,
+      candidate,
+      this.config,
+      sizeEth,
+    );
+    if (!sellable.ok) {
+      logLine(`paper skip ${candidate.symbol}: ${sellable.reason}`);
+      return;
+    }
+
     const meta = await readTokenMeta(this.client, candidate.token);
     const tokenAmount =
+      sellable.tokensOut ??
       (await quoteBuyTokensForEth(
         this.client,
         candidate.token,
         candidate.dex === "noxa" ? "v2" : candidate.dex,
         candidate.fee,
         sizeEth,
-      )) ?? 0n;
+      )) ??
+      0n;
 
     let entryPrice =
       (await quoteTokenPriceEth(
@@ -91,6 +105,11 @@ export class PaperEngine {
     }
 
     if (entryPrice <= 0) {
+      if (this.config.REQUIRE_SELLABLE_QUOTE) {
+        // No synthetic entries when anti-rug gates are on — they hide rugs in paper stats.
+        logLine(`paper skip ${candidate.symbol}: no usable entry quote`);
+        return;
+      }
       entryPrice = 1e-12;
       logLine(`paper warn ${candidate.symbol}: no quote, using synthetic entry`);
     }

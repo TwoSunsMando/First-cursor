@@ -182,12 +182,32 @@ export function applyRiskFilters(
     }
   }
 
+  const isLaunchSrc =
+    candidate.source === "noxa" ||
+    candidate.source === "uniswap_v2" ||
+    candidate.source === "uniswap_v3";
+
+  if (candidate.initialLiquidityEth === null && config.REJECT_NULL_LIQUIDITY) {
+    reasons.push("liquidity unknown (null) — reject until enrichable");
+  }
+
   if (
     candidate.initialLiquidityEth !== null &&
     candidate.initialLiquidityEth < config.MIN_INITIAL_LIQUIDITY_ETH
   ) {
     reasons.push(
       `liquidity ${candidate.initialLiquidityEth.toFixed(4)} ETH < min ${config.MIN_INITIAL_LIQUIDITY_ETH}`,
+    );
+  }
+
+  // Launch sources: stricter floor (seeded rugs often sit under 0.5 ETH WETH)
+  if (
+    isLaunchSrc &&
+    candidate.initialLiquidityEth !== null &&
+    candidate.initialLiquidityEth < config.MIN_LAUNCH_LIQUIDITY_ETH
+  ) {
+    reasons.push(
+      `launch liq ${candidate.initialLiquidityEth.toFixed(4)} ETH < min launch ${config.MIN_LAUNCH_LIQUIDITY_ETH}`,
     );
   }
 

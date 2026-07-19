@@ -162,9 +162,15 @@ export class BotRunner {
       const live = this.live;
       this.stopIngest = await startIngest(watchClient, this.config, (c) => {
         this.beat();
-        return handleCandidate(c, this.config, this.db, paper, live);
+        return handleCandidate(c, this.config, this.db, paper, live, {}, watchClient);
       });
-      this.stopTrending = startTrendingPoller(this.config, this.db, paper, live);
+      this.stopTrending = startTrendingPoller(
+        this.config,
+        this.db,
+        paper,
+        live,
+        watchClient,
+      );
 
       this.markTimer = setInterval(async () => {
         try {

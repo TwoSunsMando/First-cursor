@@ -21,6 +21,10 @@ import {
   readTokenMeta,
   readV3PoolFee,
 } from "../chain/pricing.js";
+import {
+  checkSellableRoundtrip,
+  rereadPoolLiquidityEth,
+} from "../risk/sellability.js";
 import { formatPnl, getEthUsd } from "../util/money.js";
 import { fetchTokenMomentumExtras } from "../ingest/dexpaprika.js";
 import { evaluateMoonUpgrade } from "../moon/detect.js";
@@ -145,6 +149,52 @@ export class LiveGateway {
       this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
       throw new Error(msg);
     }
+
+    // Re-check sellability + pool WETH at Yes — LP may have been pulled during TTL.
+    const candidate: CandidateToken = {
+      token,
+      symbol: row.symbol,
+      name: row.symbol,
+      dex,
+      pairOrPool: row.pair_or_pool as Address,
+      fee: row.fee,
+      initialLiquidityEth: null,
+      txHash: null,
+      source:
+        dex === "noxa"
+          ? "noxa"
+          : dex === "v3"
+            ? "uniswap_v3"
+            : "uniswap_v2",
+    };
+    if (dex === "v2" || dex === "v3") {
+      const liqNow = await rereadPoolLiquidityEth(this.publicClient, candidate);
+      if (
+        liqNow != null &&
+        liqNow < this.config.MIN_LAUNCH_LIQUIDITY_ETH
+      ) {
+        const msg = `blocked at execute: pool WETH ${liqNow.toFixed(4)} < min launch ${this.config.MIN_LAUNCH_LIQUIDITY_ETH} (likely rug/pull)`;
+        this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
+        throw new Error(msg);
+      }
+      if (liqNow == null && this.config.REJECT_NULL_LIQUIDITY) {
+        const msg = "blocked at execute: pool WETH unreadable";
+        this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
+        throw new Error(msg);
+      }
+    }
+    const sellable = await checkSellableRoundtrip(
+      this.publicClient,
+      candidate,
+      this.config,
+      row.size_eth,
+    );
+    if (!sellable.ok) {
+      const msg = `blocked at execute: ${sellable.reason}`;
+      this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
+      throw new Error(msg);
+    }
+    logLine(`execute gate ok: ${sellable.reason}`);
 
     const expectedOut =
       (await quoteBuyTokensForEth(

@@ -16,6 +16,10 @@ import { decideMoonExit, decideScoutExit } from "./moon/exits.js";
 async function main() {
   const config = loadConfig();
   (config as { EXECUTION_MODE: string }).EXECUTION_MODE = "paper";
+  // Synthetic SMOKE token has no pool — disable on-chain anti-rug gates for this harness.
+  (config as { REQUIRE_SELLABLE_QUOTE: boolean }).REQUIRE_SELLABLE_QUOTE = false;
+  (config as { LAUNCH_LIQ_SETTLE_MS: number }).LAUNCH_LIQ_SETTLE_MS = 0;
+  (config as { REJECT_NULL_LIQUIDITY: boolean }).REJECT_NULL_LIQUIDITY = false;
 
   const dbPath = "./data/smoke.db";
   config.DB_PATH = dbPath;
@@ -47,7 +51,7 @@ async function main() {
     source: "uniswap_v2",
   };
 
-  await handleCandidate(candidate, config, db, paper, null);
+  await handleCandidate(candidate, config, db, paper, null, {}, client);
 
   const signalId = db.insertSignal({
     token: candidate.token,
