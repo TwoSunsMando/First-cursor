@@ -12,12 +12,14 @@ import {
   erc20Abi,
   swapRouter02Abi,
   uniswapV2RouterAbi,
+  wethAbi,
 } from "../chain/abis.js";
 import type { RhPublicClient, RhWalletClient } from "../chain/client.js";
 import {
   quoteBuyTokensForEth,
   quoteTokenPriceEth,
   readTokenMeta,
+  readV3PoolFee,
 } from "../chain/pricing.js";
 import { formatPnl, getEthUsd } from "../util/money.js";
 import { fetchTokenMomentumExtras } from "../ingest/dexpaprika.js";
@@ -387,12 +389,25 @@ export class LiveGateway {
 
     const account = this.walletClient.account.address;
     const token = pos.token as Address;
+    const walletBal = await this.publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account],
+    });
+
     const fullAmount = BigInt(pos.token_amount);
-    const amountIn =
+    let amountIn =
       partial && partial.tokenAmount > 0n && partial.tokenAmount < fullAmount
         ? partial.tokenAmount
         : fullAmount;
-    const isPartial = Boolean(partial) && amountIn < fullAmount;
+
+    // Never try to sell more than the wallet holds (tax tokens / dust mismatch).
+    if (walletBal < amountIn) amountIn = walletBal;
+    // Leave a tiny dust buffer for fee-on-transfer tokens.
+    if (amountIn > 1000n) amountIn = (amountIn * 99n) / 100n;
+
+    const isPartial = Boolean(partial) && amountIn < fullAmount && amountIn < walletBal;
     if (amountIn === 0n) {
       this.db.closePosition(positionId, {
         exit_price_eth: 0,
@@ -403,7 +418,7 @@ export class LiveGateway {
       return;
     }
 
-    // Approve router
+    // Approve router (max so fee-on-transfer sells don't stick on allowance)
     const router =
       pos.dex === "v3" ? ADDRESSES.SWAP_ROUTER_02 : ADDRESSES.UNISWAP_V2_ROUTER;
     const allowance = await this.publicClient.readContract({
@@ -417,7 +432,7 @@ export class LiveGateway {
         address: token,
         abi: erc20Abi,
         functionName: "approve",
-        args: [router, amountIn],
+        args: [router, 2n ** 256n - 1n],
         account: this.walletClient.account,
         chain: this.walletClient.chain,
       });
@@ -441,27 +456,16 @@ export class LiveGateway {
         ? 0n
         : (expectedOutWei * BigInt(10_000 - this.config.MAX_SLIPPAGE_BPS)) / 10_000n;
 
+    const wethBefore = await this.publicClient.readContract({
+      address: ADDRESSES.WETH,
+      abi: wethAbi,
+      functionName: "balanceOf",
+      args: [account],
+    });
+
     let txHash: Hash;
     if (pos.dex === "v3") {
-      const fee = pos.fee ?? 10000;
-      txHash = await this.walletClient.writeContract({
-        address: ADDRESSES.SWAP_ROUTER_02,
-        abi: swapRouter02Abi,
-        functionName: "exactInputSingle",
-        args: [
-          {
-            tokenIn: token,
-            tokenOut: ADDRESSES.WETH,
-            fee,
-            recipient: account,
-            amountIn,
-            amountOutMinimum: minOut,
-            sqrtPriceLimitX96: 0n,
-          },
-        ],
-        account: this.walletClient.account,
-        chain: this.walletClient.chain,
-      });
+      txHash = await this.sellV3ExactIn(token, amountIn, minOut, account, pos);
     } else {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 120);
       txHash = await this.walletClient.writeContract({
@@ -478,6 +482,29 @@ export class LiveGateway {
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
     if (receipt.status !== "success") {
       throw new Error(`sell tx failed: ${txHash}`);
+    }
+
+    // V3 router pays out WETH — unwrap to native ETH so MetaMask balance rises.
+    if (pos.dex === "v3") {
+      const wethAfter = await this.publicClient.readContract({
+        address: ADDRESSES.WETH,
+        abi: wethAbi,
+        functionName: "balanceOf",
+        args: [account],
+      });
+      const gained = wethAfter > wethBefore ? wethAfter - wethBefore : 0n;
+      if (gained > 0n) {
+        const unwrapHash = await this.walletClient.writeContract({
+          address: ADDRESSES.WETH,
+          abi: wethAbi,
+          functionName: "withdraw",
+          args: [gained],
+          account: this.walletClient.account,
+          chain: this.walletClient.chain,
+        });
+        await this.publicClient.waitForTransactionReceipt({ hash: unwrapHash });
+        logLine(`unwrapped ${formatEther(gained)} WETH → ETH ${EXPLORER_TX(unwrapHash)}`);
+      }
     }
 
     const exitPrice =
@@ -555,4 +582,88 @@ export class LiveGateway {
       `LIVE CLOSE #${positionId} ${pos.symbol} ${reason} pnl=${pnlLabel} out≈${formatEther(expectedOutWei)} ETH`,
     );
   }
+
+  /** V3 sell with pool fee resolution + fee-tier fallbacks. */
+  private async sellV3ExactIn(
+    token: Address,
+    amountIn: bigint,
+    minOut: bigint,
+    recipient: Address,
+    pos: PositionRow,
+  ): Promise<Hash> {
+    let poolFee: number | null = pos.fee;
+    try {
+      poolFee = (await readV3PoolFee(this.publicClient, pos.pair_or_pool as Address)) ?? pos.fee;
+    } catch {
+      /* keep stored fee */
+    }
+
+    const fees = uniqueFees([poolFee, pos.fee, 10000, 3000, 500, 100]);
+    let lastErr: Error | null = null;
+
+    for (const fee of fees) {
+      try {
+        // Simulate first so we don't burn gas on a known-bad fee tier
+        await this.publicClient.simulateContract({
+          address: ADDRESSES.SWAP_ROUTER_02,
+          abi: swapRouter02Abi,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: token,
+              tokenOut: ADDRESSES.WETH,
+              fee,
+              recipient,
+              amountIn,
+              amountOutMinimum: 0n,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+          account: this.walletClient.account,
+        });
+
+        const txHash = await this.walletClient.writeContract({
+          address: ADDRESSES.SWAP_ROUTER_02,
+          abi: swapRouter02Abi,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: token,
+              tokenOut: ADDRESSES.WETH,
+              fee,
+              recipient,
+              amountIn,
+              amountOutMinimum: minOut,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+          account: this.walletClient.account,
+          chain: this.walletClient.chain,
+        });
+        if (fee !== pos.fee) {
+          logLine(`sell used fee tier ${fee} (stored was ${pos.fee ?? "null"})`);
+        }
+        return txHash;
+      } catch (err) {
+        lastErr = err as Error;
+        logLine(`sell fee ${fee} failed: ${lastErr.message.slice(0, 120)}`);
+      }
+    }
+
+    throw new Error(
+      `V3 sell reverted for ${pos.symbol} (tried fees ${fees.join(",")}). ` +
+        `Often a honeypot / wrong pool / empty liquidity. Tokens may still be in wallet. ` +
+        `Last: ${lastErr?.message ?? "unknown"}`,
+    );
+  }
+}
+
+function uniqueFees(fees: Array<number | null | undefined>): number[] {
+  const out: number[] = [];
+  for (const f of fees) {
+    if (f == null || !Number.isFinite(f)) continue;
+    const n = Number(f);
+    if (!out.includes(n)) out.push(n);
+  }
+  return out.length ? out : [10000, 3000, 500];
 }
