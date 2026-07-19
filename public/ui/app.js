@@ -104,22 +104,53 @@ function renderPositions(rows, ethUsd) {
 function renderOrders(rows) {
   els.orderCount.textContent = String(rows.length);
   if (!rows.length) {
-    els.orderBody.innerHTML = `<tr><td colspan="6" class="empty">No open orders</td></tr>`;
+    els.orderBody.innerHTML = `<tr><td colspan="7" class="empty">No open orders</td></tr>`;
     return;
   }
   els.orderBody.innerHTML = rows
     .map(
-      (o) => `<tr>
+      (o) => `<tr data-order-id="${o.id}">
         <td>${o.id}</td>
         <td>${escapeHtml(o.side)}</td>
         <td class="sym">${escapeHtml(o.symbol)}</td>
         <td>${o.sizeEth.toFixed(4)} ETH</td>
         <td>${escapeHtml(o.notes || "")}</td>
         <td>${new Date(o.expiresAt).toLocaleString()}</td>
+        <td>
+          <div class="order-actions">
+            <button type="button" class="btn yes" data-action="approve" data-id="${o.id}">Yes</button>
+            <button type="button" class="btn no" data-action="reject" data-id="${o.id}">No</button>
+          </div>
+        </td>
       </tr>`,
     )
     .join("");
 }
+
+els.orderBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn || busy) return;
+  const id = btn.getAttribute("data-id");
+  const action = btn.getAttribute("data-action");
+  if (!id || !action) return;
+
+  const label = action === "approve" ? `Approve #${id} and send live tx?` : `Reject #${id}?`;
+  if (!window.confirm(label)) return;
+
+  busy = true;
+  btn.disabled = true;
+  els.err.textContent = action === "approve" ? `Approving #${id}…` : `Rejecting #${id}…`;
+  try {
+    await api(`/api/orders/${id}/${action}`, { method: "POST", body: "{}" });
+    els.err.textContent = action === "approve" ? `Approved #${id}` : `Rejected #${id}`;
+    await refresh();
+  } catch (err) {
+    els.err.textContent = err.message;
+    btn.disabled = false;
+  } finally {
+    busy = false;
+  }
+});
 
 function escapeHtml(s) {
   return String(s)

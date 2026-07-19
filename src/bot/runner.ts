@@ -82,6 +82,33 @@ export class BotRunner {
     return this.live;
   }
 
+  /** Create or reuse live gateway for approve/reject from the UI. */
+  ensureLiveGateway(): LiveGateway {
+    if (this.config.EXECUTION_MODE !== "live") {
+      throw new Error("Approvals require EXECUTION_MODE=live");
+    }
+    if (this.live) return this.live;
+    const http = createRhHttpClient(this.config);
+    const wallet = createRhWalletClient(this.config);
+    this.live = new LiveGateway(this.config, this.db, http, wallet);
+    if (!this.paper) {
+      this.paper = new PaperEngine(this.config, this.db, http);
+    }
+    return this.live;
+  }
+
+  async approveOrder(id: number): Promise<void> {
+    const live = this.ensureLiveGateway();
+    await live.approve(id);
+    this.beat();
+  }
+
+  async rejectOrder(id: number): Promise<void> {
+    const live = this.ensureLiveGateway();
+    await live.reject(id);
+    this.beat();
+  }
+
   private beat() {
     this.lastHeartbeatAt = new Date().toISOString();
   }

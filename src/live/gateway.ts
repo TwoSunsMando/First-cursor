@@ -67,13 +67,13 @@ export class LiveGateway {
       notes: "pending human approval",
     });
     this.db.setApprovalStatus(id, "pending", {
-      notes: `Run: npm run approve -- ${id}`,
+      notes: `Approve in UI (or: npm run approve -- ${id})`,
     });
 
     logLine(
       `LIVE APPROVAL NEEDED #${id} BUY ${candidate.symbol} ${sizeEth} ETH (expires ${expires})`,
     );
-    logLine(`  → npm run approve -- ${id}`);
+    logLine(`  → UI Approve button (or npm run approve -- ${id})`);
   }
 
   async approve(id: number): Promise<void> {
@@ -358,9 +358,9 @@ export class LiveGateway {
       position_id: pos.id,
       notes: reason,
     });
-    logLine(`SELL APPROVAL NEEDED #${id} for position #${pos.id}: ${reason}`);
-    logLine(`  → npm run approve -- ${id}`);
-  }
+        logLine(`SELL APPROVAL NEEDED #${id} for position #${pos.id}: ${reason}`);
+        logLine(`  → UI Approve button (or npm run approve -- ${id})`);
+      }
 
   private async executeSell(approvalId: number): Promise<void> {
     const row = this.db.getApproval(approvalId);

@@ -209,6 +209,28 @@ body {
   border-color: rgba(126, 200, 163, 0.35);
 }
 
+.btn.yes {
+  background: linear-gradient(180deg, #1f3a2a, #163024);
+  border-color: rgba(61, 207, 122, 0.55);
+  color: #b6f0cc;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.btn.no {
+  background: linear-gradient(180deg, #3a1f1c, #2a1614);
+  border-color: rgba(232, 93, 76, 0.55);
+  color: #ffc4bc;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.order-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
 main {
   max-width: 1100px;
   margin: 0 auto;

@@ -179,6 +179,34 @@ async function handleApi(
     return;
   }
 
+  const approveMatch = path.match(/^\/api\/orders\/(\d+)\/approve$/);
+  if (approveMatch && method === "POST") {
+    const id = Number(approveMatch[1]);
+    if (config.EXECUTION_MODE !== "live") {
+      sendJson(res, 400, { error: "Approvals only work in live mode" });
+      return;
+    }
+    try {
+      await runner.approveOrder(id);
+      sendJson(res, 200, { ok: true, id, action: "approved" });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  const rejectMatch = path.match(/^\/api\/orders\/(\d+)\/reject$/);
+  if (rejectMatch && method === "POST") {
+    const id = Number(rejectMatch[1]);
+    try {
+      await runner.rejectOrder(id);
+      sendJson(res, 200, { ok: true, id, action: "rejected" });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
   sendJson(res, 404, { error: "not found" });
 }
 
