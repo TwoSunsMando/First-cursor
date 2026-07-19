@@ -8,6 +8,7 @@ import {
   quoteTokenPriceEth,
   readTokenMeta,
 } from "../chain/pricing.js";
+import { formatEthUsdSize, formatPnl, getEthUsd } from "../util/money.js";
 
 function logLine(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -107,13 +108,16 @@ export class PaperEngine {
       signal_id: signalId,
     });
 
+    const ethUsd = await getEthUsd().catch(() => 0);
+    const sizeLabel = ethUsd > 0 ? formatEthUsdSize(sizeEth, ethUsd) : `${sizeEth} ETH`;
     logLine(
-      `PAPER OPEN #${id} ${candidate.symbol} size=${sizeEth} ETH entry≈${entryPrice.toExponential(3)} ETH/token`,
+      `PAPER OPEN #${id} ${candidate.symbol} size=${sizeLabel} entry≈${entryPrice.toExponential(3)} ETH/token`,
     );
   }
 
   async markToMarketAndExit(): Promise<void> {
     const opens = this.db.listOpenPositions("paper");
+    const ethUsd = opens.length ? await getEthUsd().catch(() => 0) : 0;
     for (const pos of opens) {
       const meta = await readTokenMeta(this.client, pos.token as Address);
       const price =
@@ -152,13 +156,13 @@ export class PaperEngine {
         pnl_eth: pnlEth,
         pnl_pct: pnlPct,
       });
-      logLine(
-        `PAPER CLOSE #${pos.id} ${pos.symbol} ${exitReason} pnl=${pnlEth.toFixed(5)} ETH (${pnlPct.toFixed(1)}%)`,
-      );
+      const pnlLabel =
+        ethUsd > 0 ? formatPnl(pnlEth, ethUsd, pnlPct) : `${pnlEth.toFixed(5)} ETH (${pnlPct.toFixed(1)}%)`;
+      logLine(`PAPER CLOSE #${pos.id} ${pos.symbol} ${exitReason} pnl=${pnlLabel}`);
     }
   }
 
-  report(): string {
+  async report(): Promise<string> {
     const stats = this.db.paperStats();
     const starting = Number(this.db.getMeta("paper_starting_equity") ?? "1");
     const openNotional = this.db
@@ -167,13 +171,27 @@ export class PaperEngine {
     const equity = starting + stats.realized_pnl_eth;
     const winRate =
       stats.closed > 0 ? ((stats.wins / stats.closed) * 100).toFixed(1) : "n/a";
+    const ethUsd = await getEthUsd().catch(() => 0);
+
+    if (ethUsd <= 0) {
+      return [
+        "=== Paper Report ===",
+        `Starting equity: ${starting} ETH`,
+        `Realized PnL:    ${stats.realized_pnl_eth.toFixed(6)} ETH`,
+        `Equity (ex MTM): ${equity.toFixed(6)} ETH`,
+        `Open positions:  ${stats.open} (notional ${openNotional.toFixed(4)} ETH)`,
+        `Closed trades:   ${stats.closed} (W ${stats.wins} / L ${stats.losses}, win rate ${winRate}%)`,
+        `TP/SL/Hold:      ${this.config.TAKE_PROFIT_PERCENT}% / ${this.config.STOP_LOSS_PERCENT}% / ${this.config.MAX_HOLD_MINUTES}m`,
+      ].join("\n");
+    }
 
     return [
       "=== Paper Report ===",
-      `Starting equity: ${starting} ETH`,
-      `Realized PnL:    ${stats.realized_pnl_eth.toFixed(6)} ETH`,
-      `Equity (ex MTM): ${equity.toFixed(6)} ETH`,
-      `Open positions:  ${stats.open} (notional ${openNotional.toFixed(4)} ETH)`,
+      `ETH price:       $${ethUsd.toFixed(2)}`,
+      `Starting equity: ${formatEthUsdSize(starting, ethUsd)}`,
+      `Realized PnL:    ${formatPnl(stats.realized_pnl_eth, ethUsd)}`,
+      `Equity (ex MTM): ${formatEthUsdSize(equity, ethUsd)}`,
+      `Open positions:  ${stats.open} (notional ${formatEthUsdSize(openNotional, ethUsd)})`,
       `Closed trades:   ${stats.closed} (W ${stats.wins} / L ${stats.losses}, win rate ${winRate}%)`,
       `TP/SL/Hold:      ${this.config.TAKE_PROFIT_PERCENT}% / ${this.config.STOP_LOSS_PERCENT}% / ${this.config.MAX_HOLD_MINUTES}m`,
     ].join("\n");

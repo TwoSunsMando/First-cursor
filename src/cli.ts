@@ -12,6 +12,7 @@ import { handleCandidate, startIngest } from "./ingest/watcher.js";
 import { robinhoodChain } from "./chain/addresses.js";
 import { formatLessonsReport, runLearningPass } from "./learning/engine.js";
 import { printTrendingOnce, startTrendingPoller } from "./ingest/trending.js";
+import { formatEthUsdSize, formatPnl, getEthUsd } from "./util/money.js";
 
 function usage() {
   console.log(`rh-chain-paper-bot — Robinhood Chain meme scanner
@@ -126,7 +127,7 @@ async function cmdScan() {
   console.log("scanning… Ctrl+C to stop");
 }
 
-function cmdStatus() {
+async function cmdStatus() {
   const config = loadConfig();
   const db = new BotDb(config.DB_PATH);
   const stats = db.paperStats();
@@ -134,39 +135,56 @@ function cmdStatus() {
   const pending = db.listPendingApprovals().length;
   const spent = db.getDailySpend();
   const activeLessons = db.listLessons(true).length;
+  const ethUsd = await getEthUsd().catch(() => 0);
   console.log(`mode:           ${config.EXECUTION_MODE}`);
   console.log(`learning:       ${config.LEARNING_MODE ? "on" : "off"} (${activeLessons} active lessons)`);
   console.log(`trending:       ${config.TRENDING_ENABLED ? "on" : "off"} (DexPaprika)`);
   console.log(`rpc:            ${config.RPC_URL}`);
   console.log(`wss:            ${config.wssRpcUrl ?? "(http poll fallback)"}`);
+  if (ethUsd > 0) console.log(`ETH price:      $${ethUsd.toFixed(2)}`);
   console.log(`paper open:     ${stats.open}`);
   console.log(`paper closed:   ${stats.closed}`);
-  console.log(`paper PnL:      ${stats.realized_pnl_eth.toFixed(6)} ETH`);
+  console.log(
+    `paper PnL:      ${
+      ethUsd > 0
+        ? formatPnl(stats.realized_pnl_eth, ethUsd)
+        : `${stats.realized_pnl_eth.toFixed(6)} ETH`
+    }`,
+  );
   console.log(`live open:      ${liveOpen}`);
   console.log(`pending approves: ${pending}`);
-  console.log(`daily spend:    ${spent.toFixed(6)} / ${config.MAX_DAILY_ETH} ETH`);
+  console.log(
+    `daily spend:    ${
+      ethUsd > 0
+        ? `${formatEthUsdSize(spent, ethUsd)} / ${formatEthUsdSize(config.MAX_DAILY_ETH, ethUsd)}`
+        : `${spent.toFixed(6)} / ${config.MAX_DAILY_ETH} ETH`
+    }`,
+  );
   db.close();
 }
 
-function cmdReport() {
+async function cmdReport() {
   const config = loadConfig();
   const db = new BotDb(config.DB_PATH);
   const http = createRhHttpClient(config);
   const paper = new PaperEngine(config, db, http);
-  console.log(paper.report());
+  console.log(await paper.report());
   const closed = db.listClosedPositions(10);
+  const ethUsd = await getEthUsd().catch(() => 0);
   if (closed.length) {
     console.log("\nRecent closed:");
     for (const p of closed) {
-      console.log(
-        `  #${p.id} ${p.mode} ${p.symbol} pnl=${(p.pnl_eth ?? 0).toFixed(5)} ETH (${(p.pnl_pct ?? 0).toFixed(1)}%) — ${p.exit_reason}`,
-      );
+      const pnl =
+        ethUsd > 0
+          ? formatPnl(p.pnl_eth ?? 0, ethUsd, p.pnl_pct)
+          : `${(p.pnl_eth ?? 0).toFixed(5)} ETH (${(p.pnl_pct ?? 0).toFixed(1)}%)`;
+      console.log(`  #${p.id} ${p.mode} ${p.symbol} pnl=${pnl} — ${p.exit_reason}`);
     }
   }
   db.close();
 }
 
-function cmdPositions() {
+async function cmdPositions() {
   const config = loadConfig();
   const db = new BotDb(config.DB_PATH);
   const opens = db.listOpenPositions();
@@ -175,10 +193,13 @@ function cmdPositions() {
     db.close();
     return;
   }
+  const ethUsd = await getEthUsd().catch(() => 0);
   for (const p of opens) {
+    const size =
+      ethUsd > 0 ? formatEthUsdSize(p.size_eth, ethUsd) : `${p.size_eth} ETH`;
     console.log(
       `#${p.id} [${p.mode}] ${p.symbol} ${p.token}\n` +
-        `  size=${p.size_eth} ETH entry=${p.entry_price_eth} dex=${p.dex} opened=${p.opened_at}`,
+        `  size=${size} entry=${p.entry_price_eth} dex=${p.dex} opened=${p.opened_at}`,
     );
   }
   db.close();
@@ -276,13 +297,13 @@ async function main() {
       await cmdTrending();
       break;
     case "status":
-      cmdStatus();
+      await cmdStatus();
       break;
     case "report":
-      cmdReport();
+      await cmdReport();
       break;
     case "positions":
-      cmdPositions();
+      await cmdPositions();
       break;
     case "learn":
       cmdLearn();

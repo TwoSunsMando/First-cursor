@@ -19,6 +19,7 @@ import {
   quoteTokenPriceEth,
   readTokenMeta,
 } from "../chain/pricing.js";
+import { formatPnl, getEthUsd } from "../util/money.js";
 
 function logLine(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -401,8 +402,13 @@ export class LiveGateway {
       this.db.setApprovalStatus(approvalId, "executed", { executed_tx: txHash });
     }
 
+    const ethUsd = await getEthUsd().catch(() => 0);
+    const pnlLabel =
+      ethUsd > 0
+        ? formatPnl(pnlEth, ethUsd, pnlPct)
+        : `${pnlEth.toFixed(5)} ETH (${pnlPct.toFixed(1)}%)`;
     logLine(
-      `LIVE CLOSE #${positionId} ${pos.symbol} ${reason} pnl=${pnlEth.toFixed(5)} ETH (${pnlPct.toFixed(1)}%) out≈${formatEther(expectedOutWei)} ETH`,
+      `LIVE CLOSE #${positionId} ${pos.symbol} ${reason} pnl=${pnlLabel} out≈${formatEther(expectedOutWei)} ETH`,
     );
   }
 }

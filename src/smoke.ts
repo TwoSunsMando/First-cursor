@@ -67,7 +67,7 @@ async function main() {
     source: "smoke",
   }));
 
-  console.log(paper.report());
+  console.log(await paper.report());
   console.log(`open positions: ${db.countOpenPositions("paper")}`);
 
   // Simulate TP exit by closing with fake high price via DB helpers
@@ -80,7 +80,7 @@ async function main() {
       pnl_pct: 100,
     });
   }
-  console.log(paper.report());
+  console.log(await paper.report());
   console.log("smoke ok");
   db.close();
 }
