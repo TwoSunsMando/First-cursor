@@ -121,6 +121,19 @@ export class LiveGateway {
     const amountIn = parseEther(row.size_eth.toFixed(18));
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 120);
 
+    const bal = await this.publicClient.getBalance({ address: account });
+    // Leave ~0.0008 ETH for gas headroom on RH Chain
+    const gasReserve = parseEther("0.0008");
+    if (bal < amountIn + gasReserve) {
+      const have = Number(formatEther(bal));
+      const need = row.size_eth + 0.0008;
+      const msg =
+        `Insufficient ETH: wallet has ${have.toFixed(6)} ETH, need ~${need.toFixed(4)} ETH ` +
+        `(buy ${row.size_eth} + gas). Lower MAX_BUY_ETH or add funds.`;
+      this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
+      throw new Error(msg);
+    }
+
     const expectedOut =
       (await quoteBuyTokensForEth(
         this.publicClient,
