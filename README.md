@@ -9,8 +9,12 @@ This is **onchain wallet trading**, not Robinhood brokerage / Agentic MCP equiti
 ```bash
 cp .env.example .env
 npm install
+npm run ui          # dashboard at http://127.0.0.1:8787 — Start/Stop here
+# or terminal-only:
 npm run scan
 ```
+
+**Do not run `ui` and `scan` at the same time** (two scanners = double entries).
 
 In another terminal:
 
@@ -23,6 +27,25 @@ npm run positions
 Default `EXECUTION_MODE=paper` — no private key required.
 
 Paper BUY defaults to score **≥ 40**. Tune with `BUY_SCORE_THRESHOLD` / `WATCH_SCORE_THRESHOLD` in `.env`.
+
+### Dashboard UI
+
+`npm run ui` serves a local control panel:
+
+- Start / Stop + running heartbeat
+- Equity, realized / unrealized PnL
+- Open positions (scout / moon)
+- Open orders (pending live approvals)
+- Edit take-profit, stop-loss, max hold, max open positions (1–5)
+
+Binds to `UI_HOST` / `UI_PORT` (default `127.0.0.1:8787`).
+
+### Paper → live on WSL (same code)
+
+1. Clone repo on WSL, `cp .env.example .env`, set Alchemy `RPC_URL` + `WSS_RPC_URL`
+2. Paper: `EXECUTION_MODE=paper`, `npm run ui` — train/test
+3. Pull updates: `git pull && npm install` → restart UI
+4. Live: separate `DB_PATH=./data/live.db`, set `PRIVATE_KEY`, `EXECUTION_MODE=live`, small caps
 
 ## Learning Mode (paper)
 
@@ -174,7 +197,8 @@ Contract addresses live in `src/chain/addresses.ts` — **re-verify on Blockscou
 
 | Command | Description |
 |---------|-------------|
-| `npm run scan` | Start ingest + paper/live loop |
+| `npm run ui` | Local dashboard (start/stop, params, positions) |
+| `npm run scan` | Start ingest + paper/live loop (terminal) |
 | `npm run status` | Mode, counts, daily spend |
 | `npm run report` | Paper P&L summary |
 | `npm run positions` | Open positions |

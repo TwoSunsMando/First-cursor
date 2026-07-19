@@ -1,0 +1,207 @@
+const $ = (id) => document.getElementById(id);
+
+const els = {
+  modeLabel: $("modeLabel"),
+  runState: $("runState"),
+  beatAge: $("beatAge"),
+  pulse: $("pulse"),
+  heartbeat: $("heartbeat"),
+  btnStart: $("btnStart"),
+  btnStop: $("btnStop"),
+  equity: $("equity"),
+  realized: $("realized"),
+  unrealized: $("unrealized"),
+  notional: $("notional"),
+  record: $("record"),
+  paramForm: $("paramForm"),
+  paramHint: $("paramHint"),
+  posCount: $("posCount"),
+  posBody: $("posBody"),
+  orderCount: $("orderCount"),
+  orderBody: $("orderBody"),
+  updated: $("updated"),
+  err: $("err"),
+};
+
+let busy = false;
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      "content-type": "application/json",
+      ...(opts.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function money(eth, usd) {
+  if (eth == null || Number.isNaN(eth)) return "—";
+  const e = `${eth >= 0 ? "" : "−"}${Math.abs(eth).toFixed(4)} ETH`;
+  if (usd == null) return e;
+  const u = `${usd >= 0 ? "" : "−"}$${Math.abs(usd).toFixed(2)}`;
+  return `${u}`;
+}
+
+function clsPnl(n) {
+  if (n > 0) return "pos";
+  if (n < 0) return "neg";
+  return "";
+}
+
+function fmtAge(iso) {
+  if (!iso) return "no beat";
+  const sec = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  return `${Math.floor(sec / 60)}m ${sec % 60}s ago`;
+}
+
+function setHeartbeat(hb) {
+  const running = hb.running || hb.state === "running";
+  els.runState.textContent = hb.state || (running ? "running" : "stopped");
+  els.beatAge.textContent = fmtAge(hb.lastHeartbeatAt);
+  els.pulse.classList.toggle("on", running);
+  els.pulse.classList.toggle("off", !running);
+  els.btnStart.disabled = busy || running || hb.state === "starting";
+  els.btnStop.disabled = busy || (!running && hb.state !== "starting");
+}
+
+function fillParams(p) {
+  const form = els.paramForm;
+  form.TAKE_PROFIT_PERCENT.value = p.TAKE_PROFIT_PERCENT;
+  form.STOP_LOSS_PERCENT.value = p.STOP_LOSS_PERCENT;
+  form.MAX_HOLD_MINUTES.value = p.MAX_HOLD_MINUTES;
+  form.MAX_OPEN_POSITIONS.value = p.MAX_OPEN_POSITIONS;
+}
+
+function renderPositions(rows, ethUsd) {
+  els.posCount.textContent = String(rows.length);
+  if (!rows.length) {
+    els.posBody.innerHTML = `<tr><td colspan="6" class="empty">No open positions</td></tr>`;
+    return;
+  }
+  els.posBody.innerHTML = rows
+    .map((p) => {
+      const pnlUsd = p.unrealizedUsd;
+      const pnlCls = clsPnl(p.pnlPct);
+      return `<tr>
+        <td>${p.id}</td>
+        <td class="sym">${escapeHtml(p.symbol)}<div style="color:var(--muted);font-size:0.7rem">${p.token.slice(0, 10)}…</div></td>
+        <td><span class="book ${p.book}">${p.book}</span></td>
+        <td>${p.sizeEth.toFixed(4)} ETH</td>
+        <td class="${pnlCls}">${p.pnlPct.toFixed(1)}%<div style="font-size:0.75rem">${money(p.unrealizedEth, pnlUsd)}</div></td>
+        <td>${new Date(p.openedAt).toLocaleString()}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderOrders(rows) {
+  els.orderCount.textContent = String(rows.length);
+  if (!rows.length) {
+    els.orderBody.innerHTML = `<tr><td colspan="6" class="empty">No open orders</td></tr>`;
+    return;
+  }
+  els.orderBody.innerHTML = rows
+    .map(
+      (o) => `<tr>
+        <td>${o.id}</td>
+        <td>${escapeHtml(o.side)}</td>
+        <td class="sym">${escapeHtml(o.symbol)}</td>
+        <td>${o.sizeEth.toFixed(4)} ETH</td>
+        <td>${escapeHtml(o.notes || "")}</td>
+        <td>${new Date(o.expiresAt).toLocaleString()}</td>
+      </tr>`,
+    )
+    .join("");
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function refresh() {
+  try {
+    const data = await api("/api/dashboard");
+    els.err.textContent = data.heartbeat?.error || "";
+    setHeartbeat(data.heartbeat);
+    fillParams(data.params);
+    els.modeLabel.textContent = `${data.mode} · ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+
+    const b = data.balance;
+    els.equity.textContent = money(b.equityMtmEth, b.equityMtmUsd);
+    els.equity.className = clsPnl(b.equityMtmEth - b.startingEth);
+    els.realized.textContent = money(b.realizedPnlEth, b.realizedPnlUsd);
+    els.realized.className = clsPnl(b.realizedPnlEth);
+    els.unrealized.textContent = money(b.unrealizedPnlEth, b.unrealizedPnlUsd);
+    els.unrealized.className = clsPnl(b.unrealizedPnlEth);
+    els.notional.textContent = money(b.openNotionalEth, data.ethUsd ? b.openNotionalEth * data.ethUsd : null);
+
+    const ps = data.paperStats;
+    const wr = ps.winRate != null ? `${ps.winRate.toFixed(0)}%` : "n/a";
+    els.record.textContent = `${ps.wins}W / ${ps.losses}L (${wr})`;
+
+    renderPositions(data.positions, data.ethUsd);
+    renderOrders(data.orders);
+    els.updated.textContent = `updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
+  } catch (err) {
+    els.err.textContent = err.message;
+  }
+}
+
+els.btnStart.addEventListener("click", async () => {
+  busy = true;
+  els.btnStart.disabled = true;
+  try {
+    const hb = await api("/api/start", { method: "POST", body: "{}" });
+    setHeartbeat(hb);
+    await refresh();
+  } catch (err) {
+    els.err.textContent = err.message;
+  } finally {
+    busy = false;
+  }
+});
+
+els.btnStop.addEventListener("click", async () => {
+  busy = true;
+  els.btnStop.disabled = true;
+  try {
+    const hb = await api("/api/stop", { method: "POST", body: "{}" });
+    setHeartbeat(hb);
+    await refresh();
+  } catch (err) {
+    els.err.textContent = err.message;
+  } finally {
+    busy = false;
+  }
+});
+
+els.paramForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(els.paramForm);
+  const body = {
+    TAKE_PROFIT_PERCENT: Number(fd.get("TAKE_PROFIT_PERCENT")),
+    STOP_LOSS_PERCENT: Number(fd.get("STOP_LOSS_PERCENT")),
+    MAX_HOLD_MINUTES: Number(fd.get("MAX_HOLD_MINUTES")),
+    MAX_OPEN_POSITIONS: Number(fd.get("MAX_OPEN_POSITIONS")),
+  };
+  try {
+    const next = await api("/api/params", { method: "POST", body: JSON.stringify(body) });
+    fillParams(next);
+    els.paramHint.textContent = `Saved · TP ${next.TAKE_PROFIT_PERCENT}% / SL ${next.STOP_LOSS_PERCENT}% / hold ${next.MAX_HOLD_MINUTES}m / max ${next.MAX_OPEN_POSITIONS}`;
+  } catch (err) {
+    els.err.textContent = err.message;
+  }
+});
+
+refresh();
+setInterval(refresh, 3000);

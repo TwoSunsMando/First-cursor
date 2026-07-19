@@ -3,22 +3,23 @@ import { loadConfig } from "./config.js";
 import { BotDb } from "./db/schema.js";
 import {
   createRhHttpClient,
-  createRhPublicClient,
   createRhWalletClient,
 } from "./chain/client.js";
 import { PaperEngine } from "./paper/engine.js";
 import { LiveGateway } from "./live/gateway.js";
-import { handleCandidate, startIngest } from "./ingest/watcher.js";
-import { robinhoodChain } from "./chain/addresses.js";
 import { formatLessonsReport, runLearningPass } from "./learning/engine.js";
-import { printTrendingOnce, startTrendingPoller } from "./ingest/trending.js";
+import { printTrendingOnce } from "./ingest/trending.js";
 import { formatEthUsdSize, formatPnl, getEthUsd } from "./util/money.js";
+import { BotRunner } from "./bot/runner.js";
+import { startUiServer } from "./ui/server.js";
+import { applyRuntimeOverrides } from "./runtime/configStore.js";
 
 function usage() {
   console.log(`rh-chain-paper-bot — Robinhood Chain meme scanner
 
 Usage:
-  npm run scan                 Start scanner (paper by default)
+  npm run ui                   Dashboard (start/stop bot, params, positions)
+  npm run scan                 Start scanner in terminal (paper by default)
   npm run trending             One-shot DexPaprika trending / boost list
   npm run status               Mode, equity, open counts
   npm run report               Paper P&L report
@@ -29,12 +30,10 @@ Usage:
   npm run approve -- <id>      Approve and execute a pending live order
   npm run start -- reject <id> Reject a pending approval
 
-Learning Mode (paper only):
-  Set LEARNING_MODE=true in .env, run scan, periodically run learn
-  Active lessons adjust entry scores from historical win/loss buckets
+Dashboard:
+  npm run ui  →  http://127.0.0.1:8787  (UI_PORT / UI_HOST)
 
-Trending (DexPaprika):
-  TRENDING_ENABLED=true polls top volume/txn pools + recent boosts into the scorer
+Do not run npm run scan and npm run ui at the same time (one bot process).
 
 Env: copy .env.example → .env
 Docs: https://docs.robinhood.com/chain/
@@ -43,95 +42,52 @@ Docs: https://docs.robinhood.com/chain/
 
 async function cmdScan() {
   const config = loadConfig();
-  const db = new BotDb(config.DB_PATH);
-  const http = createRhHttpClient(config);
-  const watchClient = createRhPublicClient(config);
-  const paper = new PaperEngine(config, db, http);
+  const runner = new BotRunner(config);
+  applyRuntimeOverrides(runner.db, config);
 
-  let live: LiveGateway | null = null;
-  if (config.EXECUTION_MODE === "live") {
-    const wallet = createRhWalletClient(config);
-    live = new LiveGateway(config, db, http, wallet);
-    console.log(`LIVE mode wallet=${wallet.account.address}`);
-    console.log(
-      `caps: max_buy=${config.MAX_BUY_ETH} ETH, max_daily=${config.MAX_DAILY_ETH} ETH, slippage=${config.MAX_SLIPPAGE_BPS} bps`,
-    );
-  } else {
-    console.log("PAPER mode (set EXECUTION_MODE=live for real swaps + approvals)");
-  }
-  console.log(
-    `thresholds: BUY≥${config.BUY_SCORE_THRESHOLD} WATCH≥${config.WATCH_SCORE_THRESHOLD} minLiq=${config.MIN_INITIAL_LIQUIDITY_ETH} ETH`,
-  );
-  console.log(
-    `trending weights: momentum×${config.TRENDING_MOMENTUM_SCALE} maxOpen=${config.MAX_TRENDING_OPEN_POSITIONS}/${config.MAX_OPEN_POSITIONS}`,
-  );
-  if (config.MOON_ENABLED) {
-    console.log(
-      `moon runners: on (max=${config.MAX_MOON_POSITIONS}, arm≥${config.MOON_ARM_PNL_PCT}%, trim@${config.TAKE_PROFIT_PERCENT}%→${config.MOON_TRIM_TP_PCT}% size, trail giveback ${config.MOON_TRAIL_GIVEBACK_PCT}%)`,
-    );
-  } else {
-    console.log("moon runners: off");
-  }
-  if (config.LEARNING_MODE) {
-    if (config.EXECUTION_MODE !== "paper") {
-      console.warn("LEARNING_MODE is set but EXECUTION_MODE is not paper — lessons will not apply");
-    } else {
-      console.log(
-        `LEARNING MODE on (minSamples=${config.LEARN_MIN_SAMPLES}, relearn every ${config.LEARN_INTERVAL_MS || "manual-only"}ms)`,
-      );
-      const boot = runLearningPass(db, config.LEARN_MIN_SAMPLES);
-      for (const line of boot.summaryLines) console.log(`  ${line}`);
-    }
-  }
+  await runner.start();
+  console.log("scanning… Ctrl+C to stop");
 
-  const chainId = await http.getChainId();
-  const block = await http.getBlockNumber();
-  console.log(
-    `connected chainId=${chainId} (expect ${robinhoodChain.id}) block=${block}`,
-  );
-  if (chainId !== robinhoodChain.id) {
-    console.warn("WARNING: chain id mismatch — check RPC_URL");
-  }
-
-  const stopIngest = await startIngest(watchClient, config, (c) =>
-    handleCandidate(c, config, db, paper, live),
-  );
-  const stopTrending = startTrendingPoller(config, db, paper, live);
-
-  const timer = setInterval(async () => {
-    try {
-      await paper.markToMarketAndExit();
-      if (live) await live.maybeRequestSellApprovals();
-    } catch (err) {
-      console.error(`mark/exit error: ${(err as Error).message}`);
-    }
-  }, config.markIntervalMs);
-
-  let learnTimer: ReturnType<typeof setInterval> | undefined;
-  if (config.LEARNING_MODE && config.LEARN_INTERVAL_MS > 0) {
-    learnTimer = setInterval(() => {
-      try {
-        const result = runLearningPass(db, config.LEARN_MIN_SAMPLES);
-        console.log(`[learn] ${result.summaryLines.join(" | ")}`);
-      } catch (err) {
-        console.error(`learn error: ${(err as Error).message}`);
-      }
-    }, config.LEARN_INTERVAL_MS);
-  }
-
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log("shutting down…");
-    clearInterval(timer);
-    if (learnTimer) clearInterval(learnTimer);
-    stopTrending();
-    stopIngest();
-    db.close();
+    await runner.stop();
+    runner.db.close();
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
+}
 
-  console.log("scanning… Ctrl+C to stop");
+async function cmdUi() {
+  const config = loadConfig();
+  const runner = new BotRunner(config);
+  applyRuntimeOverrides(runner.db, config);
+
+  const port = Number(process.env.UI_PORT || 8787);
+  const host = process.env.UI_HOST || "127.0.0.1";
+  const server = await startUiServer({ config, runner, port, host });
+
+  console.log(`UI http://${server.host}:${server.port}`);
+  console.log(`mode=${config.EXECUTION_MODE} — use Start in the dashboard (or POST /api/start)`);
+  console.log("Ctrl+C to stop UI + bot");
+
+  const shutdown = async () => {
+    console.log("shutting down…");
+    await runner.stop();
+    await server.close();
+    runner.db.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
 }
 
 async function cmdStatus() {
@@ -308,6 +264,9 @@ async function main() {
       break;
     case "scan":
       await cmdScan();
+      break;
+    case "ui":
+      await cmdUi();
       break;
     case "trending":
       await cmdTrending();
