@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 const els = {
   modeLabel: $("modeLabel"),
+  modeBadge: $("modeBadge"),
   runState: $("runState"),
   beatAge: $("beatAge"),
   pulse: $("pulse"),
@@ -134,7 +135,12 @@ async function refresh() {
     els.err.textContent = data.heartbeat?.error || "";
     setHeartbeat(data.heartbeat);
     fillParams(data.params);
-    els.modeLabel.textContent = `${data.mode} · ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+    const mode = data.mode || "paper";
+    els.modeBadge.textContent = mode;
+    els.modeBadge.classList.toggle("live", mode === "live");
+    els.modeBadge.classList.toggle("paper", mode === "paper");
+    els.modeLabel.textContent = `ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+    document.title = mode === "live" ? "LIVE · RH Chain Bot" : "Paper · RH Chain Bot";
 
     const b = data.balance;
     els.equity.textContent = money(b.equityMtmEth, b.equityMtmUsd);
