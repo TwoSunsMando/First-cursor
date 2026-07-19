@@ -66,7 +66,8 @@ export function startUiServer(opts: {
       const buf = await readFile(filePath);
       res.writeHead(200, {
         "content-type": MIME[extname(filePath)] || "application/octet-stream",
-        "cache-control": "no-cache",
+        "cache-control": "no-store, no-cache, must-revalidate",
+        pragma: "no-cache",
       });
       res.end(buf);
     } catch (err) {

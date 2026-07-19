@@ -135,12 +135,18 @@ async function refresh() {
     els.err.textContent = data.heartbeat?.error || "";
     setHeartbeat(data.heartbeat);
     fillParams(data.params);
-    const mode = data.mode || "paper";
-    els.modeBadge.textContent = mode;
-    els.modeBadge.classList.toggle("live", mode === "live");
-    els.modeBadge.classList.toggle("paper", mode === "paper");
-    els.modeLabel.textContent = `ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+    const mode = String(data.mode || data.heartbeat?.mode || "paper").toLowerCase();
+    if (els.modeBadge) {
+      els.modeBadge.textContent = mode;
+      els.modeBadge.classList.toggle("live", mode === "live");
+      els.modeBadge.classList.toggle("paper", mode === "paper");
+      els.modeLabel.textContent = `ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+    } else {
+      // Old cached HTML without modeBadge
+      els.modeLabel.textContent = `${mode.toUpperCase()} · ETH $${(data.ethUsd || 0).toFixed(0)} · block ${data.heartbeat.block ?? "—"}`;
+    }
     document.title = mode === "live" ? "LIVE · RH Chain Bot" : "Paper · RH Chain Bot";
+    document.body.dataset.mode = mode;
 
     const b = data.balance;
     els.equity.textContent = money(b.equityMtmEth, b.equityMtmUsd);
