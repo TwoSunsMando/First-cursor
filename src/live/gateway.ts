@@ -121,15 +121,27 @@ export class LiveGateway {
     const amountIn = parseEther(row.size_eth.toFixed(18));
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 120);
 
-    const bal = await this.publicClient.getBalance({ address: account });
-    // Leave ~0.0008 ETH for gas headroom on RH Chain
-    const gasReserve = parseEther("0.0008");
-    if (bal < amountIn + gasReserve) {
-      const have = Number(formatEther(bal));
-      const need = row.size_eth + 0.0008;
+    const ethBal = await this.publicClient.getBalance({ address: account });
+    const wethBal =
+      dex === "v3"
+        ? await this.publicClient.readContract({
+            address: ADDRESSES.WETH,
+            abi: wethAbi,
+            functionName: "balanceOf",
+            args: [account],
+          })
+        : 0n;
+    // V3 buy = wrap + approve + swap (up to 3 txs); leave extra gas headroom.
+    const gasReserve = dex === "v3" ? parseEther("0.0012") : parseEther("0.0008");
+    const needWrap = wethBal >= amountIn ? 0n : amountIn - wethBal;
+    if (ethBal < needWrap + gasReserve) {
+      const haveEth = Number(formatEther(ethBal));
+      const haveWeth = Number(formatEther(wethBal));
       const msg =
-        `Insufficient ETH: wallet has ${have.toFixed(6)} ETH, need ~${need.toFixed(4)} ETH ` +
-        `(buy ${row.size_eth} + gas). Lower MAX_BUY_ETH or add funds.`;
+        `Insufficient funds for buy: have ${haveEth.toFixed(6)} ETH` +
+        (dex === "v3" ? ` + ${haveWeth.toFixed(6)} WETH` : "") +
+        `, need ~${row.size_eth} in (ETH/WETH) + ${Number(formatEther(gasReserve))} gas. ` +
+        `Lower MAX_BUY_ETH, unwrap/add funds, or reject this approval.`;
       this.db.setApprovalStatus(approvalId, "rejected", { notes: msg });
       throw new Error(msg);
     }
@@ -150,25 +162,16 @@ export class LiveGateway {
     let txHash: Hash;
 
     if (dex === "v3") {
-      const fee = row.fee ?? 10000;
-      txHash = await this.walletClient.writeContract({
-        address: ADDRESSES.SWAP_ROUTER_02,
-        abi: swapRouter02Abi,
-        functionName: "exactInputSingle",
-        args: [
-          {
-            tokenIn: ADDRESSES.WETH,
-            tokenOut: token,
-            fee,
-            recipient: account,
-            amountIn,
-            amountOutMinimum: minOut,
-            sqrtPriceLimitX96: 0n,
-          },
-        ],
-        value: amountIn,
-        account: this.walletClient.account,
-        chain: this.walletClient.chain,
+      // Reliable path on RH Chain: wrap ETH→WETH ourselves, then swap as ERC-20.
+      // Sending native value into exactInputSingle often reverts with "TF"
+      // (TransferFrom failed) when the router doesn't consume msg.value as WETH.
+      txHash = await this.buyV3WithWrappedEth({
+        token,
+        amountIn,
+        minOut,
+        fee: row.fee,
+        pairOrPool: row.pair_or_pool as Address,
+        recipient: account,
       });
     } else {
       txHash = await this.walletClient.writeContract({
@@ -593,6 +596,129 @@ export class LiveGateway {
         : `${totalPnl.toFixed(5)} ETH (${totalPct.toFixed(1)}%)`;
     logLine(
       `LIVE CLOSE #${positionId} ${pos.symbol} ${reason} pnl=${pnlLabel} out≈${formatEther(expectedOutWei)} ETH`,
+    );
+  }
+
+  /**
+   * Wrap native ETH to WETH, approve router, swap WETH→token.
+   * Avoids SwapRouter "TF" when payable exactInputSingle doesn't pull msg.value.
+   */
+  private async buyV3WithWrappedEth(opts: {
+    token: Address;
+    amountIn: bigint;
+    minOut: bigint;
+    fee: number | null;
+    pairOrPool: Address;
+    recipient: Address;
+  }): Promise<Hash> {
+    const { token, amountIn, minOut, recipient } = opts;
+
+    // Use existing WETH first if user already has enough (from prior sells).
+    const wethBal = await this.publicClient.readContract({
+      address: ADDRESSES.WETH,
+      abi: wethAbi,
+      functionName: "balanceOf",
+      args: [opts.recipient],
+    });
+    if (wethBal < amountIn) {
+      const need = amountIn - wethBal;
+      const depHash = await this.walletClient.writeContract({
+        address: ADDRESSES.WETH,
+        abi: wethAbi,
+        functionName: "deposit",
+        args: [],
+        value: need,
+        account: this.walletClient.account,
+        chain: this.walletClient.chain,
+      });
+      await this.publicClient.waitForTransactionReceipt({ hash: depHash });
+      logLine(`wrapped ${formatEther(need)} ETH → WETH ${EXPLORER_TX(depHash)}`);
+    }
+
+    const allowance = await this.publicClient.readContract({
+      address: ADDRESSES.WETH,
+      abi: wethAbi,
+      functionName: "allowance",
+      args: [recipient, ADDRESSES.SWAP_ROUTER_02],
+    });
+    if (allowance < amountIn) {
+      const apHash = await this.walletClient.writeContract({
+        address: ADDRESSES.WETH,
+        abi: wethAbi,
+        functionName: "approve",
+        args: [ADDRESSES.SWAP_ROUTER_02, 2n ** 256n - 1n],
+        account: this.walletClient.account,
+        chain: this.walletClient.chain,
+      });
+      await this.publicClient.waitForTransactionReceipt({ hash: apHash });
+    }
+
+    let poolFee: number | null = opts.fee;
+    try {
+      poolFee = (await readV3PoolFee(this.publicClient, opts.pairOrPool)) ?? opts.fee;
+    } catch {
+      /* keep */
+    }
+    const fees = uniqueFees([poolFee, opts.fee, 10000, 3000, 500, 100]);
+    let lastErr: Error | null = null;
+
+    for (const fee of fees) {
+      try {
+        await this.publicClient.simulateContract({
+          address: ADDRESSES.SWAP_ROUTER_02,
+          abi: swapRouter02Abi,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: ADDRESSES.WETH,
+              tokenOut: token,
+              fee,
+              recipient,
+              amountIn,
+              amountOutMinimum: 0n,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+          account: this.walletClient.account,
+        });
+
+        const txHash = await this.walletClient.writeContract({
+          address: ADDRESSES.SWAP_ROUTER_02,
+          abi: swapRouter02Abi,
+          functionName: "exactInputSingle",
+          args: [
+            {
+              tokenIn: ADDRESSES.WETH,
+              tokenOut: token,
+              fee,
+              recipient,
+              amountIn,
+              amountOutMinimum: minOut,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+          account: this.walletClient.account,
+          chain: this.walletClient.chain,
+        });
+        if (fee !== opts.fee) {
+          logLine(`buy used fee tier ${fee} (stored was ${opts.fee ?? "null"})`);
+        }
+        return txHash;
+      } catch (err) {
+        lastErr = err as Error;
+        const msg = lastErr.message || "";
+        // Friendly decode of Uniswap TransferHelper error
+        if (/\bTF\b/.test(msg) || msg.includes("TRANSFER_FROM_FAILED")) {
+          logLine(`buy fee ${fee} TF (transfer failed) — trying next fee`);
+        } else {
+          logLine(`buy fee ${fee} failed: ${msg.slice(0, 120)}`);
+        }
+      }
+    }
+
+    throw new Error(
+      `V3 buy reverted for ${token} (tried fees ${fees.join(",")}). ` +
+        `TF usually means transfer/pool issue — skip this token. Last: ${lastErr?.message ?? "unknown"}`,
     );
   }
 
