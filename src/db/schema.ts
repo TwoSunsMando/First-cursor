@@ -465,6 +465,23 @@ export class BotDb {
       });
   }
 
+  /** Mark an open position closed as a total loss (no on-chain sell). */
+  writeOffPosition(id: number, note = "write_off worthless"): PositionRow | undefined {
+    const pos = this.getPosition(id);
+    if (!pos || pos.status !== "open") return undefined;
+    const size = pos.size_eth || pos.original_size_eth || 0;
+    const partial = pos.realized_partial_pnl_eth ?? 0;
+    const pnlEth = partial - size;
+    const orig = pos.original_size_eth || size || 1;
+    this.closePosition(id, {
+      exit_price_eth: 0,
+      exit_reason: note,
+      pnl_eth: pnlEth,
+      pnl_pct: (pnlEth / orig) * 100,
+    });
+    return this.getPosition(id);
+  }
+
   listOpenPositions(mode?: ExecutionMode): PositionRow[] {
     if (mode) {
       return this.db

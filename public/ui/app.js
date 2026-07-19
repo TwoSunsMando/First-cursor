@@ -82,7 +82,7 @@ function fillParams(p) {
 function renderPositions(rows, ethUsd) {
   els.posCount.textContent = String(rows.length);
   if (!rows.length) {
-    els.posBody.innerHTML = `<tr><td colspan="6" class="empty">No open positions</td></tr>`;
+    els.posBody.innerHTML = `<tr><td colspan="7" class="empty">No open positions</td></tr>`;
     return;
   }
   els.posBody.innerHTML = rows
@@ -96,10 +96,40 @@ function renderPositions(rows, ethUsd) {
         <td>${p.sizeEth.toFixed(4)} ETH</td>
         <td class="${pnlCls}">${p.pnlPct.toFixed(1)}%<div style="font-size:0.75rem">${money(p.unrealizedEth, pnlUsd)}</div></td>
         <td>${new Date(p.openedAt).toLocaleString()}</td>
+        <td>
+          <button type="button" class="btn no" data-action="writeoff" data-id="${p.id}" title="Mark worthless / clear from open">Clear</button>
+        </td>
       </tr>`;
     })
     .join("");
 }
+
+els.posBody.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-action='writeoff']");
+  if (!btn || busy) return;
+  const id = btn.getAttribute("data-id");
+  if (!id) return;
+  if (
+    !window.confirm(
+      `Clear #${id} as a total loss?\n\nUse this when the token is worthless / unsellable.\nThis does NOT send a blockchain sell — it only closes the bot position.`,
+    )
+  ) {
+    return;
+  }
+  busy = true;
+  btn.disabled = true;
+  els.err.textContent = `Clearing #${id}…`;
+  try {
+    await api(`/api/positions/${id}/writeoff`, { method: "POST", body: "{}" });
+    els.err.textContent = `Cleared #${id} (write-off)`;
+    await refresh();
+  } catch (err) {
+    els.err.textContent = err.message;
+    btn.disabled = false;
+  } finally {
+    busy = false;
+  }
+});
 
 function renderOrders(rows) {
   els.orderCount.textContent = String(rows.length);

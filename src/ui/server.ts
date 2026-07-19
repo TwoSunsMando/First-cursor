@@ -207,6 +207,24 @@ async function handleApi(
     return;
   }
 
+  const writeOffMatch = path.match(/^\/api\/positions\/(\d+)\/writeoff$/);
+  if (writeOffMatch && method === "POST") {
+    const id = Number(writeOffMatch[1]);
+    const closed = runner.db.writeOffPosition(id, "write_off worthless (UI)");
+    if (!closed) {
+      sendJson(res, 404, { error: `open position #${id} not found` });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      id,
+      action: "write_off",
+      pnlEth: closed.pnl_eth,
+      pnlPct: closed.pnl_pct,
+    });
+    return;
+  }
+
   sendJson(res, 404, { error: "not found" });
 }
 

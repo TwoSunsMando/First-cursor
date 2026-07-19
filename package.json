@@ -18,6 +18,7 @@
     "positions": "tsx src/cli.ts positions",
     "approve": "tsx src/cli.ts approve",
     "pending": "tsx src/cli.ts pending",
+    "writeoff": "tsx src/cli.ts writeoff",
     "learn": "tsx src/cli.ts learn",
     "lessons": "tsx src/cli.ts lessons",
     "typecheck": "tsc --noEmit",

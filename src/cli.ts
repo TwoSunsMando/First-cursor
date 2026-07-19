@@ -29,6 +29,7 @@ Usage:
   npm run pending              List pending live approvals
   npm run approve -- <id>      Approve and execute a pending live order
   npm run start -- reject <id> Reject a pending approval
+  npm run writeoff -- <id>     Close a worthless open position (no chain sell)
 
 Dashboard:
   npm run ui  →  http://127.0.0.1:8787  (UI_PORT / UI_HOST)
@@ -266,6 +267,19 @@ async function cmdTrending() {
   await printTrendingOnce(config);
 }
 
+async function cmdWriteoff(idStr: string) {
+  const id = Number(idStr);
+  if (!Number.isFinite(id)) throw new Error("usage: writeoff <positionId>");
+  const config = loadConfig();
+  const db = new BotDb(config.DB_PATH);
+  const closed = db.writeOffPosition(id, "write_off worthless (cli)");
+  if (!closed) throw new Error(`open position #${id} not found`);
+  console.log(
+    `wrote off #${id} ${closed.symbol} pnl=${(closed.pnl_eth ?? 0).toFixed(6)} ETH (${(closed.pnl_pct ?? 0).toFixed(1)}%)`,
+  );
+  db.close();
+}
+
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
   switch (cmd) {
@@ -307,6 +321,9 @@ async function main() {
       break;
     case "reject":
       await cmdReject(arg);
+      break;
+    case "writeoff":
+      await cmdWriteoff(arg);
       break;
     default:
       console.error(`Unknown command: ${cmd}`);
