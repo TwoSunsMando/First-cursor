@@ -1,7 +1,15 @@
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+import { resolve } from "node:path";
 import { z } from "zod";
 import { isHex } from "viem";
+
+// Always prefer the project .env; override shell leftovers; trim Windows CRLF.
+dotenv.config({ path: resolve(process.cwd(), ".env"), override: true });
+for (const [k, v] of Object.entries(process.env)) {
+  if (typeof v === "string" && /[\r\n]|^\s|\s$/.test(v)) {
+    process.env[k] = v.replace(/^\uFEFF/, "").trim();
+  }
+}
 
 const boolFromEnv = z
   .string()
@@ -15,7 +23,11 @@ const ConfigSchema = z
   .object({
     RPC_URL: z.string().url().default("https://rpc.mainnet.chain.robinhood.com"),
     WSS_RPC_URL: z.string().optional().default(""),
-    EXECUTION_MODE: z.enum(["paper", "live"]).default("paper"),
+    EXECUTION_MODE: z
+      .string()
+      .default("paper")
+      .transform((v) => v.trim().toLowerCase())
+      .pipe(z.enum(["paper", "live"])),
     PAPER_BUY_ETH: z.coerce.number().positive().default(0.01),
     PAPER_STARTING_EQUITY_ETH: z.coerce.number().positive().default(1.0),
     TAKE_PROFIT_PERCENT: z.coerce.number().positive().default(65),

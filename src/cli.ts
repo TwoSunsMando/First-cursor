@@ -72,8 +72,18 @@ async function cmdUi() {
   const server = await startUiServer({ config, runner, port, host });
 
   console.log(`UI http://${server.host}:${server.port}`);
-  console.log(`mode=${config.EXECUTION_MODE} — use Start in the dashboard (or POST /api/start)`);
-  console.log("Ctrl+C to stop UI + bot");
+  if (config.EXECUTION_MODE === "live") {
+    console.log("╔══════════════════════════════════════╗");
+    console.log("║           MODE = LIVE                ║");
+    console.log("║  Real funds — approve buys carefully ║");
+    console.log("╚══════════════════════════════════════╝");
+  } else {
+    console.log("┌──────────────────────────────────────┐");
+    console.log("│           MODE = PAPER               │");
+    console.log("│  Simulated only — no real orders     │");
+    console.log("└──────────────────────────────────────┘");
+  }
+  console.log("Use Start in the dashboard (or POST /api/start). Ctrl+C to stop.");
 
   const shutdown = async () => {
     console.log("shutting down…");
