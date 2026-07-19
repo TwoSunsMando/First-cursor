@@ -58,18 +58,31 @@ Tune with `TRENDING_MIN_VOLUME_USD_24H`, `TRENDING_MIN_LIQUIDITY_USD`, and `TREN
 
 Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool discovery:
 
-- Base bonus: trending +14 / boost +16 (not +25/+30)
+- Base bonus: trending +12 / boost +18
 - Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.55**)
-- At most `MAX_TRENDING_OPEN_POSITIONS` (default **2**) of your open slots may be trending/boost
+- At most `MAX_TRENDING_OPEN_POSITIONS` (default **3**) of your open slots may be trending/boost
 
-### Re-entry guard (stop-loss churn)
+### Overnight edge rules (paper training)
 
-Trending can keep surfacing the same names after a stop-loss. The bot now blocks re-entry by **contract address and ticker** (so Jimothy copycats are covered too):
+Tuned from closed-trade analysis (prefer boost + mid-liq; avoid late majors):
+
+| Rule | Default |
+|------|---------|
+| Mid-liq sweet spot | `PREFERRED_LIQ_MIN/MAX_ETH` = **5–50** (score bonus) |
+| Skip mega-liq trending | `SKIP_TRENDING_LIQ_ETH=50` |
+| Late-entry skip | 15m vol ≥ `LATE_ENTRY_VOL_ETH_15M` (12) or buys ≥ `LATE_ENTRY_BUYS` (45) |
+| Confirming edge for BUY | `BUY_REQUIRE_CONFIRMING_EDGE=true` — need boost/new-pool, mid-liq, or moderate momentum |
+| Dead-chop blacklist | 2× near-flat max-hold (`CHOP_FLAT_PNL_PCT=5`) → `REENTRY_AFTER_CHOP_MS` (48h) |
+
+### Re-entry guard (stop-loss / chop churn)
+
+Trending can keep surfacing the same names after a stop-loss. The bot blocks re-entry by **contract address and ticker** (so Jimothy copycats are covered too):
 
 | Situation | Default cooldown |
 |-----------|------------------|
 | Last exit was `stop_loss` | `REENTRY_AFTER_STOP_MS` (6h) |
 | Hard loss (≤ −50% / −100%) or 2+ stop-losses in window | `REENTRY_AFTER_HARD_LOSS_MS` (24h) |
+| 2× dead-chop max-hold (\|pnl\| ≤ 5%) | `REENTRY_AFTER_CHOP_MS` (48h) |
 | Other losing exit | up to 2h |
 
 Logs look like: `risk: re-entry blocked for STOCKCAT — stop-loss on #17 … wait 5h`.

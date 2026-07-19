@@ -4,7 +4,11 @@ import type { AppConfig } from "../config.js";
 import type { BotDb } from "../db/schema.js";
 import type { CandidateToken } from "../risk/filters.js";
 import { applyRiskFilters } from "../risk/filters.js";
-import { scoreCandidate, type ScoreExtras } from "../signals/score.js";
+import {
+  hasConfirmingEdge,
+  scoreCandidate,
+  type ScoreExtras,
+} from "../signals/score.js";
 import { lessonScoreDeltaForCandidate } from "../learning/engine.js";
 import { ADDRESSES } from "../chain/addresses.js";
 import {
@@ -47,6 +51,13 @@ export async function handleCandidate(
   extras: ScoreExtras = {},
 ): Promise<void> {
   const mode = config.EXECUTION_MODE;
+  const scoreWeights = {
+    trendingMomentumScale: config.TRENDING_MOMENTUM_SCALE,
+    preferredLiqMinEth: config.PREFERRED_LIQ_MIN_ETH,
+    preferredLiqMaxEth: config.PREFERRED_LIQ_MAX_ETH,
+    lateEntryVolEth15m: config.LATE_ENTRY_VOL_ETH_15M,
+    lateEntryBuys: config.LATE_ENTRY_BUYS,
+  };
   const scored = scoreCandidate(
     candidate,
     extras,
@@ -54,7 +65,7 @@ export async function handleCandidate(
       buy: config.BUY_SCORE_THRESHOLD,
       watch: config.WATCH_SCORE_THRESHOLD,
     },
-    { trendingMomentumScale: config.TRENDING_MOMENTUM_SCALE },
+    scoreWeights,
   );
   const reasons = [...scored.reasons];
   let finalScore = scored.score;
@@ -74,7 +85,16 @@ export async function handleCandidate(
   if (finalScore >= config.BUY_SCORE_THRESHOLD) action = "BUY";
   else if (finalScore >= config.WATCH_SCORE_THRESHOLD) action = "WATCH";
 
-  const risk = applyRiskFilters(candidate, config, db, mode);
+  // Don't trust raw high score alone — need boost/new-pool, mid-liq, or moderate momentum.
+  if (action === "BUY" && config.BUY_REQUIRE_CONFIRMING_EDGE) {
+    const edge = hasConfirmingEdge(candidate, extras, scoreWeights);
+    if (!edge.ok) {
+      action = "WATCH";
+      reasons.push(`edge: ${edge.reason} — demoted to WATCH`);
+    }
+  }
+
+  const risk = applyRiskFilters(candidate, config, db, mode, extras);
   if (!risk.ok) {
     action = "SKIP";
     reasons.push(...risk.reasons.map((r) => `risk: ${r}`));

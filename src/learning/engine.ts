@@ -16,7 +16,8 @@ export interface LearnResult {
 
 function liquidityBucket(liq: number | null | undefined): string {
   const v = liq ?? 0;
-  if (v >= 5) return "liq_ge_5";
+  if (v >= 50) return "liq_ge_50";
+  if (v >= 5) return "liq_5_to_50";
   if (v >= 1) return "liq_1_to_5";
   if (v >= 0.25) return "liq_0_25_to_1";
   if (v >= 0.05) return "liq_0_05_to_0_25";
@@ -48,7 +49,8 @@ function exitBucket(reason: string | null): string {
 
 function labelFor(kind: LessonKind, bucket: string): string {
   const map: Record<string, string> = {
-    liq_ge_5: "liquidity ≥ 5 ETH",
+    liq_ge_50: "liquidity ≥ 50 ETH (mega)",
+    liq_5_to_50: "liquidity 5–50 ETH (mid sweet-spot)",
     liq_1_to_5: "liquidity 1–5 ETH",
     liq_0_25_to_1: "liquidity 0.25–1 ETH",
     liq_0_05_to_0_25: "liquidity 0.05–0.25 ETH",

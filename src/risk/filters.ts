@@ -1,6 +1,7 @@
 import type { Address } from "viem";
 import type { AppConfig } from "../config.js";
 import type { BotDb, DexKind, PositionRow } from "../db/schema.js";
+import type { ScoreExtras } from "../signals/score.js";
 
 export interface CandidateToken {
   token: Address;
@@ -65,7 +66,47 @@ function evaluateClosedTrade(
   return `re-entry blocked for ${scopeLabel} — ${why}; wait ${left}`;
 }
 
-/** Why we should not reopen this token right now (stop-loss churn guard). */
+function evaluateChopBlock(
+  token: Address,
+  symbol: string,
+  config: AppConfig,
+  db: BotDb,
+  mode: "paper" | "live",
+): string | null {
+  if (config.REENTRY_AFTER_CHOP_MS <= 0 || config.CHOP_STREAK <= 0) return null;
+
+  const windowMs = Math.max(config.REENTRY_AFTER_CHOP_MS, config.REENTRY_AFTER_HARD_LOSS_MS);
+  const sinceIso = new Date(Date.now() - windowMs).toISOString();
+  const flatPct = config.CHOP_FLAT_PNL_PCT;
+
+  const byToken = db.countRecentChopExits(token, mode, sinceIso, flatPct);
+  const sym = symbol.trim();
+  const bySym =
+    sym && sym !== "???"
+      ? db.countRecentChopExitsBySymbol(sym, mode, sinceIso, flatPct)
+      : 0;
+  const chops = Math.max(byToken, bySym);
+  if (chops < config.CHOP_STREAK) return null;
+
+  // Cooldown from the most recent closed trade for this scope
+  const last =
+    db.getLastClosedPosition(token, mode) ??
+    (sym && sym !== "???" ? db.getLastClosedBySymbol(sym, mode) : undefined);
+  if (!last?.closed_at) return null;
+  const closedAt = Date.parse(last.closed_at);
+  if (!Number.isFinite(closedAt)) return null;
+  const ageMs = Date.now() - closedAt;
+  if (ageMs >= config.REENTRY_AFTER_CHOP_MS) return null;
+
+  const label =
+    bySym >= config.CHOP_STREAK && sym
+      ? `${sym} (ticker)`
+      : symbol || token.slice(0, 10);
+  const left = formatDuration(config.REENTRY_AFTER_CHOP_MS - ageMs);
+  return `re-entry blocked for ${label} — ${chops}x dead-chop max-hold (|pnl|≤${flatPct}%); wait ${left}`;
+}
+
+/** Why we should not reopen this token right now (stop-loss / chop churn guard). */
 export function getReentryBlock(
   token: Address,
   symbol: string,
@@ -73,11 +114,19 @@ export function getReentryBlock(
   db: BotDb,
   mode: "paper" | "live",
 ): string | null {
-  if (config.REENTRY_AFTER_STOP_MS <= 0 && config.REENTRY_AFTER_HARD_LOSS_MS <= 0) {
+  if (
+    config.REENTRY_AFTER_STOP_MS <= 0 &&
+    config.REENTRY_AFTER_HARD_LOSS_MS <= 0 &&
+    config.REENTRY_AFTER_CHOP_MS <= 0
+  ) {
     return null;
   }
 
-  const windowMs = Math.max(config.REENTRY_AFTER_HARD_LOSS_MS, config.REENTRY_AFTER_STOP_MS);
+  const windowMs = Math.max(
+    config.REENTRY_AFTER_HARD_LOSS_MS,
+    config.REENTRY_AFTER_STOP_MS,
+    config.REENTRY_AFTER_CHOP_MS,
+  );
   const streakSince = new Date(Date.now() - windowMs).toISOString();
 
   // 1) Exact contract cooldown
@@ -108,6 +157,10 @@ export function getReentryBlock(
     }
   }
 
+  // 3) Dead-chop (near-flat max-hold exits)
+  const chop = evaluateChopBlock(token, symbol, config, db, mode);
+  if (chop) return chop;
+
   return null;
 }
 
@@ -116,8 +169,11 @@ export function applyRiskFilters(
   config: AppConfig,
   db: BotDb,
   mode: "paper" | "live",
+  extras: ScoreExtras = {},
 ): RiskResult {
   const reasons: string[] = [];
+  const isTrendingSrc =
+    candidate.source === "trending" || candidate.source === "boost";
 
   const blob = `${candidate.name} ${candidate.symbol}`.toLowerCase();
   for (const deny of config.denyNameSubstrings) {
@@ -133,6 +189,38 @@ export function applyRiskFilters(
     reasons.push(
       `liquidity ${candidate.initialLiquidityEth.toFixed(4)} ETH < min ${config.MIN_INITIAL_LIQUIDITY_ETH}`,
     );
+  }
+
+  // Overnight: mega-liq trending majors were consistent losers
+  if (
+    isTrendingSrc &&
+    config.SKIP_TRENDING_LIQ_ETH > 0 &&
+    candidate.initialLiquidityEth !== null &&
+    candidate.initialLiquidityEth >= config.SKIP_TRENDING_LIQ_ETH
+  ) {
+    reasons.push(
+      `trending mega-liq ${candidate.initialLiquidityEth.toFixed(1)} ETH ≥ ${config.SKIP_TRENDING_LIQ_ETH} (skip majors)`,
+    );
+  }
+
+  // Late-entry blow-off: very high 15m vol / buy count on trending
+  const vol = extras.volumeEth15m ?? 0;
+  const buys = extras.uniqueBuyers ?? 0;
+  if (
+    isTrendingSrc &&
+    config.LATE_ENTRY_VOL_ETH_15M > 0 &&
+    vol >= config.LATE_ENTRY_VOL_ETH_15M
+  ) {
+    reasons.push(
+      `late-entry 15m vol ${vol.toFixed(2)} ETH ≥ ${config.LATE_ENTRY_VOL_ETH_15M}`,
+    );
+  }
+  if (
+    isTrendingSrc &&
+    config.LATE_ENTRY_BUYS > 0 &&
+    buys >= config.LATE_ENTRY_BUYS
+  ) {
+    reasons.push(`late-entry buys ${buys} ≥ ${config.LATE_ENTRY_BUYS}`);
   }
 
   if (db.hasOpenPositionForToken(candidate.token, mode)) {

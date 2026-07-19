@@ -24,6 +24,10 @@ export interface ScoreExtras {
 export interface ScoreWeights {
   /** Scale for volume/buys/Δ/24h-vol when source is trending or boost (0–1). */
   trendingMomentumScale: number;
+  preferredLiqMinEth?: number;
+  preferredLiqMaxEth?: number;
+  lateEntryVolEth15m?: number;
+  lateEntryBuys?: number;
 }
 
 export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
@@ -33,6 +37,10 @@ export const DEFAULT_SCORE_THRESHOLDS: ScoreThresholds = {
 
 export const DEFAULT_SCORE_WEIGHTS: ScoreWeights = {
   trendingMomentumScale: 0.55,
+  preferredLiqMinEth: 5,
+  preferredLiqMaxEth: 50,
+  lateEntryVolEth15m: 12,
+  lateEntryBuys: 45,
 };
 
 function isTrendingSource(source: string): boolean {
@@ -40,9 +48,54 @@ function isTrendingSource(source: string): boolean {
 }
 
 /**
+ * Confirming edge for BUY — raw high score alone is not enough.
+ * Overnight: boost + mid-liq + moderate momentum won; mega-liq trending lost.
+ */
+export function hasConfirmingEdge(
+  candidate: CandidateToken,
+  extras: ScoreExtras = {},
+  weights: Pick<
+    ScoreWeights,
+    "preferredLiqMinEth" | "preferredLiqMaxEth" | "lateEntryVolEth15m" | "lateEntryBuys"
+  > = {},
+): { ok: boolean; reason: string } {
+  const liqMin = weights.preferredLiqMinEth ?? 5;
+  const liqMax = weights.preferredLiqMaxEth ?? 50;
+  const lateVol = weights.lateEntryVolEth15m ?? 12;
+  const lateBuys = weights.lateEntryBuys ?? 45;
+  const liq = candidate.initialLiquidityEth;
+  const vol = extras.volumeEth15m ?? 0;
+  const buys = extras.uniqueBuyers ?? 0;
+  const src = candidate.source;
+
+  if (src === "boost" || src === "noxa" || src === "uniswap_v2" || src === "uniswap_v3") {
+    return { ok: true, reason: `confirming source=${src}` };
+  }
+
+  if (liq != null && liq >= liqMin && liq < liqMax) {
+    return { ok: true, reason: `confirming mid-liq ${liq.toFixed(1)} ETH` };
+  }
+
+  // Moderate momentum (not late blow-off)
+  const volOk = vol >= 0.5 && (lateVol <= 0 || vol < lateVol);
+  const buysOk = buys >= 3 && (lateBuys <= 0 || buys < lateBuys);
+  if (volOk && buysOk) {
+    return {
+      ok: true,
+      reason: `confirming moderate momentum vol=${vol.toFixed(1)} buys=${buys}`,
+    };
+  }
+
+  return {
+    ok: false,
+    reason:
+      "no confirming edge (need boost/new-pool, mid-liq 5–50, or moderate 15m momentum)",
+  };
+}
+
+/**
  * Heuristic scorer.
- * Trending/boost get a modest base bonus; momentum extras are scaled down
- * so new-pool launches can still compete for paper slots.
+ * Prefers mid liquidity and moderate momentum; demotes mega-liq / late blow-offs.
  */
 export function scoreCandidate(
   candidate: CandidateToken,
@@ -56,16 +109,20 @@ export function scoreCandidate(
   const momScale = trending
     ? Math.max(0, Math.min(1, weights.trendingMomentumScale))
     : 1;
+  const liqMin = weights.preferredLiqMinEth ?? 5;
+  const liqMax = weights.preferredLiqMaxEth ?? 50;
+  const lateVol = weights.lateEntryVolEth15m ?? 12;
+  const lateBuys = weights.lateEntryBuys ?? 45;
 
   if (candidate.source === "noxa") {
     score += 35;
     reasons.push("NOXA launch (+35)");
   } else if (candidate.source === "boost") {
-    score += 16;
-    reasons.push("recent boost (+16)");
+    score += 18;
+    reasons.push("recent boost (+18)");
   } else if (candidate.source === "trending") {
-    score += 14;
-    reasons.push("trending list (+14)");
+    score += 12;
+    reasons.push("trending list (+12)");
   } else if (candidate.dex === "v3") {
     score += 20;
     reasons.push("Uniswap V3 pool (+20)");
@@ -75,12 +132,22 @@ export function scoreCandidate(
   }
 
   const liq = candidate.initialLiquidityEth ?? 0;
-  if (liq >= 1) {
-    const liqPts = trending ? 18 : 25; // soft cap for mega-liquid trending majors
+  if (liq >= liqMax) {
+    // Mega-liq: overnight losers on trending majors — soft points only
+    const liqPts = trending ? 4 : 10;
     score += liqPts;
     reasons.push(
-      `liquidity ${liq.toFixed(3)} ETH (+${liqPts}${trending ? " trending-capped" : ""})`,
+      `liquidity ${liq.toFixed(2)} ETH mega (≥${liqMax}) (+${liqPts}${trending ? " skeptical" : ""})`,
     );
+  } else if (liq >= liqMin) {
+    // Sweet spot from overnight training
+    const liqPts = candidate.source === "boost" ? 26 : trending ? 22 : 28;
+    score += liqPts;
+    reasons.push(`liquidity ${liq.toFixed(2)} ETH mid sweet-spot (+${liqPts})`);
+  } else if (liq >= 1) {
+    const liqPts = trending ? 14 : 20;
+    score += liqPts;
+    reasons.push(`liquidity ${liq.toFixed(3)} ETH (+${liqPts})`);
   } else if (liq >= 0.25) {
     const liqPts = trending ? 10 : 15;
     score += liqPts;
@@ -97,32 +164,46 @@ export function scoreCandidate(
   }
 
   const addMom = (pts: number, label: string) => {
-    // ceil for positive momentum so ×0.55 doesn't crush mid-tier signals to noise
     let scaled = trending ? Math.ceil(pts * momScale) : pts;
     if (pts > 0 && scaled < 1) scaled = 1;
+    if (pts < 0 && trending) scaled = pts; // full late/dump penalties
     score += scaled;
-    if (trending && scaled !== pts) {
+    if (trending && scaled !== pts && pts > 0) {
       reasons.push(`${label} → +${scaled} (×${momScale})`);
     } else {
-      reasons.push(`${label} (+${scaled})`);
+      reasons.push(`${label} (${scaled >= 0 ? "+" : ""}${scaled})`);
     }
   };
 
   const vol = extras.volumeEth15m ?? 0;
-  if (vol >= 5) addMom(25, `15m vol ${vol.toFixed(2)} ETH`);
-  else if (vol >= 1) addMom(15, `15m vol ${vol.toFixed(2)} ETH`);
-  else if (vol >= 0.2) addMom(8, `15m vol ${vol.toFixed(2)} ETH`);
+  if (lateVol > 0 && vol >= lateVol) {
+    addMom(-10, `15m vol ${vol.toFixed(2)} ETH late-entry`);
+  } else if (vol >= 5) {
+    // Hot but not blow-off — smaller bonus than before
+    addMom(10, `15m vol ${vol.toFixed(2)} ETH elevated`);
+  } else if (vol >= 1) {
+    addMom(15, `15m vol ${vol.toFixed(2)} ETH`);
+  } else if (vol >= 0.2) {
+    addMom(8, `15m vol ${vol.toFixed(2)} ETH`);
+  }
 
   const buyers = extras.uniqueBuyers ?? 0;
-  if (buyers >= 20) addMom(15, `buys ${buyers}`);
-  else if (buyers >= 5) addMom(8, `buys ${buyers}`);
+  if (lateBuys > 0 && buyers >= lateBuys) {
+    addMom(-8, `buys ${buyers} late-entry`);
+  } else if (buyers >= 20) {
+    addMom(10, `buys ${buyers}`);
+  } else if (buyers >= 5) {
+    addMom(8, `buys ${buyers}`);
+  }
 
   const chg15 = extras.priceChange15mPct;
   if (chg15 != null && Number.isFinite(chg15)) {
-    if (chg15 >= 25) addMom(12, `15m Δ +${chg15.toFixed(1)}%`);
+    if (chg15 >= 80) {
+      // Parabolic — often late
+      addMom(-6, `15m Δ +${chg15.toFixed(1)}% parabolic`);
+    } else if (chg15 >= 25) addMom(12, `15m Δ +${chg15.toFixed(1)}%`);
     else if (chg15 >= 10) addMom(6, `15m Δ +${chg15.toFixed(1)}%`);
     else if (chg15 <= -25) {
-      // Dumps: full penalty even for trending (don't scale down risk)
       const pen = chg15 <= -40 ? -12 : -8;
       score += pen;
       reasons.push(`15m Δ ${chg15.toFixed(1)}% (${pen} dump)`);
@@ -130,7 +211,7 @@ export function scoreCandidate(
   }
 
   const vol24 = extras.volumeUsd24h ?? 0;
-  if (vol24 >= 1_000_000) addMom(8, `24h vol $${(vol24 / 1e6).toFixed(2)}M`);
+  if (vol24 >= 1_000_000) addMom(4, `24h vol $${(vol24 / 1e6).toFixed(2)}M`);
   else if (vol24 >= 100_000) addMom(4, `24h vol $${(vol24 / 1e3).toFixed(0)}k`);
 
   let action: SignalAction = "SKIP";

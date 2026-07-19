@@ -430,6 +430,51 @@ export class BotDb {
     ).c;
   }
 
+  /** Near-flat max-hold exits (dead chop) for a token. */
+  countRecentChopExits(
+    token: Address,
+    mode: ExecutionMode,
+    sinceIso: string,
+    flatPnlPct: number,
+  ): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions
+           WHERE status = 'closed'
+             AND mode = ?
+             AND lower(token) = lower(?)
+             AND exit_reason LIKE 'max_hold%'
+             AND ABS(COALESCE(pnl_pct, 0)) <= ?
+             AND COALESCE(closed_at, opened_at) >= ?`,
+        )
+        .get(mode, token, flatPnlPct, sinceIso) as { c: number }
+    ).c;
+  }
+
+  countRecentChopExitsBySymbol(
+    symbol: string,
+    mode: ExecutionMode,
+    sinceIso: string,
+    flatPnlPct: number,
+  ): number {
+    const sym = symbol.trim();
+    if (!sym || sym === "???") return 0;
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM positions
+           WHERE status = 'closed'
+             AND mode = ?
+             AND lower(symbol) = lower(?)
+             AND exit_reason LIKE 'max_hold%'
+             AND ABS(COALESCE(pnl_pct, 0)) <= ?
+             AND COALESCE(closed_at, opened_at) >= ?`,
+        )
+        .get(mode, sym, flatPnlPct, sinceIso) as { c: number }
+    ).c;
+  }
+
   listClosedPositions(limit = 50): PositionRow[] {
     return this.db
       .prepare(`SELECT * FROM positions WHERE status = 'closed' ORDER BY id DESC LIMIT ?`)

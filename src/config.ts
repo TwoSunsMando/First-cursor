@@ -21,12 +21,41 @@ const ConfigSchema = z
     STOP_LOSS_PERCENT: z.coerce.number().positive().default(15),
     MAX_HOLD_MINUTES: z.coerce.number().int().positive().default(45),
     MIN_INITIAL_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(0.05),
+    /**
+     * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
+     * Used for score sweet-spot bonus and BUY confirmation.
+     */
+    PREFERRED_LIQ_MIN_ETH: z.coerce.number().nonnegative().default(5),
+    PREFERRED_LIQ_MAX_ETH: z.coerce.number().positive().default(50),
+    /**
+     * Skip trending/boost candidates at or above this WETH liquidity (majors / late).
+     * Set 0 to disable.
+     */
+    SKIP_TRENDING_LIQ_ETH: z.coerce.number().nonnegative().default(50),
+    /**
+     * 15m volume (ETH) at/above this is treated as late-entry for trending/boost.
+     * Hard-skips in risk filter; also demotes in scorer. 0 = disable hard skip.
+     */
+    LATE_ENTRY_VOL_ETH_15M: z.coerce.number().nonnegative().default(12),
+    /** Unique buys at/above this → late-entry (with LATE_ENTRY_VOL). 0 = disable. */
+    LATE_ENTRY_BUYS: z.coerce.number().int().nonnegative().default(45),
     MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(5),
     DENY_NAME_SUBSTRINGS: z.string().default("scam,honeypot,test"),
     /** Score ≥ this → BUY (paper open / live approval). Was 55; 45 matches V3+≥1 ETH liq. */
     BUY_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(40),
     /** Score ≥ this (and < BUY) → WATCH. */
     WATCH_SCORE_THRESHOLD: z.coerce.number().nonnegative().default(32),
+    /**
+     * If true, BUY requires a confirming edge (boost/noxa/new-pool, mid-liq, or
+     * moderate momentum). Raw high score alone is not enough.
+     */
+    BUY_REQUIRE_CONFIRMING_EDGE: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
     /** Paper-only: mine closed trades into lessons and apply score deltas. */
     LEARNING_MODE: boolFromEnv,
     /** Min closed trades in a feature bucket before a lesson becomes ACTIVE. */
@@ -58,15 +87,22 @@ const ConfigSchema = z
      * After a stop-loss on a token, block re-entry for this long (paper + live).
      * Stops trending from immediately buying Jimothy/STOCKCAT again.
      */
-    REENTRY_AFTER_STOP_MS: z.coerce.number().int().nonnegative().default(3 * 60 * 60 * 1000),
+    REENTRY_AFTER_STOP_MS: z.coerce.number().int().nonnegative().default(6 * 60 * 60 * 1000),
     /** Longer ban after brutal losses (pnl ≤ -50% or exit reason contains -100). */
     REENTRY_AFTER_HARD_LOSS_MS: z.coerce
       .number()
       .int()
       .nonnegative()
-      .default(12 * 60 * 60 * 1000),
+      .default(24 * 60 * 60 * 1000),
     /** If this many stop-losses hit on one token inside the window, use hard-loss cooldown. */
-    REENTRY_STOP_STREAK: z.coerce.number().int().positive().default(3),
+    REENTRY_STOP_STREAK: z.coerce.number().int().positive().default(2),
+    /**
+     * Dead-chop: max-hold exits with |pnl%| ≤ this count as flat chops.
+     * After CHOP_STREAK such exits, block re-entry for REENTRY_AFTER_CHOP_MS.
+     */
+    CHOP_FLAT_PNL_PCT: z.coerce.number().nonnegative().default(5),
+    CHOP_STREAK: z.coerce.number().int().positive().default(2),
+    REENTRY_AFTER_CHOP_MS: z.coerce.number().int().nonnegative().default(48 * 60 * 60 * 1000),
 
     PRIVATE_KEY: z.string().optional().default(""),
     MAX_BUY_ETH: z.coerce.number().positive().default(0.01),
