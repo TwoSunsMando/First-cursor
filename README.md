@@ -122,11 +122,12 @@ Launches no longer auto-pass. Before BUY:
 | Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS` (optional short) |
 | **Min age before BUY** | `MIN_LAUNCH_AGE_MS=120000` (2m) — non-blocking defer; mid-wait probes every `LAUNCH_LIQ_PROBE_MS` abort on LP pull |
 | **Confirm window** | `LAUNCH_CONFIRM_MS=90000` — after age ok, wait again + re-check (catches delayed rugs that look fine at 2m) |
+| **Launch momentum** | `REQUIRE_LAUNCH_MOMENTUM=true` — need 15m Δ≥25% **or** vol≥2 ETH **or** buys≥15 (DexPaprika); plus `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH=6` |
 | **Live early LP drain** | `EARLY_RUG_WINDOW_MS` + `EARLY_RUG_LIQ_FRACTION` — emergency sell if pool WETH collapses after entry |
 | Buy→sell quoter roundtrip | `REQUIRE_SELLABLE_QUOTE=true` — fail if unsellable or tax > `MAX_ROUNDTRIP_TAX_BPS` (2500 = 25%) |
 | Live re-check at Yes | same gates run again at execute (LP may vanish during approval TTL) |
 
-Logs: `DEFER BUY … age=120s+confirm=90s`, `DEFER CONFIRM …`, `DEFER ABORT …`, `DEFER OK …`, `EARLY RUG #… emergency sell`.
+Logs: `DEFER BUY …`, `DEFER CONFIRM …`, `DEFER SKIP … momentum weak/missing`, `momentum ok (Δ≥25%|…)`, `EARLY RUG #…`.
 
 Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` / `DEFER SKIP` in logs instead of opens.
 

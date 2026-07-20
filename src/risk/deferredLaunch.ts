@@ -8,6 +8,8 @@ import {
   checkSellableRoundtrip,
   rereadPoolLiquidityEth,
 } from "./sellability.js";
+import { fetchTokenMomentumExtras } from "../ingest/dexpaprika.js";
+import type { ScoreExtras } from "../signals/score.js";
 
 export interface DeferredLaunch {
   candidate: CandidateToken;
@@ -44,6 +46,64 @@ function dropTooHard(
   if (maxDropPct <= 0 || from <= 0) return null;
   const dropPct = ((from - to) / from) * 100;
   return dropPct >= maxDropPct ? dropPct : null;
+}
+
+/** DexPaprika 15m momentum gate — any one leg can pass. */
+export function evaluateLaunchMomentum(
+  extras: ScoreExtras,
+  config: AppConfig,
+): { ok: boolean; reason: string } {
+  if (!config.REQUIRE_LAUNCH_MOMENTUM) {
+    return { ok: true, reason: "momentum gate disabled" };
+  }
+  const vol = extras.volumeEth15m ?? 0;
+  const buys = extras.uniqueBuyers ?? 0;
+  const delta = extras.priceChange15mPct;
+  const needDelta = config.LAUNCH_MOMENTUM_MIN_DELTA_PCT;
+  const needVol = config.LAUNCH_MOMENTUM_MIN_VOL_ETH;
+  const needBuys = config.LAUNCH_MOMENTUM_MIN_BUYS;
+
+  if (needDelta <= 0 && needVol <= 0 && needBuys <= 0) {
+    return { ok: true, reason: "momentum thresholds all 0" };
+  }
+
+  const parts: string[] = [];
+  if (delta != null && Number.isFinite(delta)) {
+    parts.push(`15mΔ=${delta.toFixed(1)}%`);
+  } else {
+    parts.push("15mΔ=n/a");
+  }
+  parts.push(`vol=${vol.toFixed(2)}ETH`);
+  parts.push(`buys=${buys}`);
+
+  const hitDelta =
+    needDelta > 0 && delta != null && Number.isFinite(delta) && delta >= needDelta;
+  const hitVol = needVol > 0 && vol >= needVol;
+  const hitBuys = needBuys > 0 && buys >= needBuys;
+  if (hitDelta || hitVol || hitBuys) {
+    const how = [
+      hitDelta ? `Δ≥${needDelta}%` : null,
+      hitVol ? `vol≥${needVol}` : null,
+      hitBuys ? `buys≥${needBuys}` : null,
+    ]
+      .filter(Boolean)
+      .join("|");
+    return { ok: true, reason: `momentum ok (${how}; ${parts.join(" ")})` };
+  }
+
+  // No DexPaprika data at all → fail closed (brand-new rugs often have empty summaries)
+  const noData =
+    (delta == null || !Number.isFinite(delta)) && vol <= 0 && buys <= 0;
+  if (noData) {
+    return {
+      ok: false,
+      reason: `momentum missing (no DexPaprika 15m yet; need Δ≥${needDelta}% or vol≥${needVol} or buys≥${needBuys})`,
+    };
+  }
+  return {
+    ok: false,
+    reason: `momentum weak (${parts.join(" ")}; need Δ≥${needDelta}% or vol≥${needVol}ETH or buys≥${needBuys})`,
+  };
 }
 
 /**
@@ -259,12 +319,40 @@ export class DeferredLaunchQueue {
       logLine(`DEFER OK ${candidate.symbol}: waited ${waitSec}s`);
     }
 
+    // Stricter entry floor after age+confirm (paper moons ~8–15 ETH; rugs often ~3–5)
+    const entryMin =
+      config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH > 0
+        ? config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH
+        : config.MIN_LAUNCH_LIQUIDITY_ETH;
+    if (
+      next.initialLiquidityEth != null &&
+      next.initialLiquidityEth < entryMin
+    ) {
+      logLine(
+        `DEFER SKIP ${next.symbol}: entry liq ${next.initialLiquidityEth.toFixed(4)} < min entry ${entryMin}`,
+      );
+      return;
+    }
+
     const sellable = await checkSellableRoundtrip(client, next, config);
     if (!sellable.ok) {
       logLine(`DEFER SKIP ${next.symbol}: ${sellable.reason}`);
       return;
     }
     logLine(`DEFER ${next.symbol}: ${sellable.reason}`);
+
+    // Real 15m momentum — biggest separator of moon winners vs deferred rugs
+    let momReason = "momentum skipped";
+    if (config.REQUIRE_LAUNCH_MOMENTUM) {
+      const extras = await fetchTokenMomentumExtras(next.token);
+      const mom = evaluateLaunchMomentum(extras, config);
+      momReason = mom.reason;
+      if (!mom.ok) {
+        logLine(`DEFER SKIP ${next.symbol}: ${mom.reason}`);
+        return;
+      }
+      logLine(`DEFER ${next.symbol}: ${mom.reason}`);
+    }
 
     const mode = config.EXECUTION_MODE;
     if (db.countOpenPositions(mode) >= config.MAX_OPEN_POSITIONS) {
@@ -285,7 +373,7 @@ export class DeferredLaunchQueue {
       fee: next.fee,
       score: 0,
       action: "BUY",
-      reasons: `deferred ${waitSec}s (${item.phase}); ${sellable.reason}; from signal #${item.signalId}`,
+      reasons: `deferred ${waitSec}s (${item.phase}); ${sellable.reason}; ${momReason}; from signal #${item.signalId}`,
       initial_liquidity_eth: next.initialLiquidityEth,
       tx_hash: next.txHash,
       source: next.source,

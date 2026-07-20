@@ -164,6 +164,14 @@ export class BotRunner {
               : "") +
             ` before BUY (probe every ${Math.round(this.config.LAUNCH_LIQ_PROBE_MS / 1000)}s)`,
         );
+        if (this.config.REQUIRE_LAUNCH_MOMENTUM) {
+          logLine(
+            `launch momentum required: Δ≥${this.config.LAUNCH_MOMENTUM_MIN_DELTA_PCT}% or vol≥${this.config.LAUNCH_MOMENTUM_MIN_VOL_ETH}ETH or buys≥${this.config.LAUNCH_MOMENTUM_MIN_BUYS}` +
+              (this.config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH > 0
+                ? `; entry liq≥${this.config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH}`
+                : ""),
+          );
+        }
       }
 
       if (this.config.LEARNING_MODE && this.config.EXECUTION_MODE === "paper") {
