@@ -119,11 +119,14 @@ Launches no longer auto-pass. Before BUY:
 |------|---------|
 | Reject unknown liq | `REJECT_NULL_LIQUIDITY=true` |
 | Min launch WETH | `MIN_LAUNCH_LIQUIDITY_ETH=0.5` |
-| Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS=4000` — fail if drop ≥ `LAUNCH_LIQ_DROP_MAX_PCT` (35%) |
+| Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS` (optional short) |
+| **Min age before BUY** | `MIN_LAUNCH_AGE_MS=120000` (2m) — non-blocking defer; mid-wait probes every `LAUNCH_LIQ_PROBE_MS` abort on LP pull |
 | Buy→sell quoter roundtrip | `REQUIRE_SELLABLE_QUOTE=true` — fail if unsellable or tax > `MAX_ROUNDTRIP_TAX_BPS` (2500 = 25%) |
 | Live re-check at Yes | same gates run again at execute (LP may vanish during approval TTL) |
 
-Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` in logs instead of opens.
+Logs: `DEFER BUY … 120s`, `DEFER ABORT … mid-wait drop`, `DEFER OK … survived 120s`, then open.
+
+Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` / `DEFER SKIP` in logs instead of opens.
 
 ### Overnight live moon-hunt (~$50 / 2 slots)
 

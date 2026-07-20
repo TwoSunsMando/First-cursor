@@ -66,10 +66,19 @@ const ConfigSchema = z
     /**
      * After PairCreated/PoolCreated, wait this many ms then re-read WETH in pool.
      * Instant LP pulls show up as a sharp drop. 0 = disable.
+     * Prefer MIN_LAUNCH_AGE_MS for the real anti-rug delay (non-blocking queue).
      */
-    LAUNCH_LIQ_SETTLE_MS: z.coerce.number().int().nonnegative().default(4000),
+    LAUNCH_LIQ_SETTLE_MS: z.coerce.number().int().nonnegative().default(0),
     /** Fail settle if WETH dropped by this % or more vs first enrich. 0 = disable drop check. */
     LAUNCH_LIQ_DROP_MAX_PCT: z.coerce.number().nonnegative().default(35),
+    /**
+     * Min age after launch detect before a BUY can execute (non-blocking defer queue).
+     * Overnight rugs were ~60s–2m — default 120s. Mid-wait probes abort early on LP pull.
+     * 0 = buy immediately after other gates (not recommended live).
+     */
+    MIN_LAUNCH_AGE_MS: z.coerce.number().int().nonnegative().default(120_000),
+    /** While deferred, re-check pool WETH this often and abort on rug. 0 = only check at ready. */
+    LAUNCH_LIQ_PROBE_MS: z.coerce.number().int().nonnegative().default(20_000),
     /**
      * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
      * Used for score sweet-spot bonus and BUY confirmation.

@@ -24,6 +24,10 @@ import {
   readV3WethLiquidityEth,
 } from "../chain/pricing.js";
 import { assertBuyGates } from "../risk/sellability.js";
+import {
+  DeferredLaunchQueue,
+  deferredLaunchQueue,
+} from "../risk/deferredLaunch.js";
 import type { PaperEngine } from "../paper/engine.js";
 import type { LiveGateway } from "../live/gateway.js";
 
@@ -136,8 +140,18 @@ export async function handleCandidate(
     );
   }
 
-  // Anti-instant-rug: settle launch liq + require buy→sell roundtrip before BUY.
-  if (action === "BUY" && client) {
+  // Min-age defer for launches: don't buy in the rug window (default 120s).
+  // Queue is non-blocking so the poller keeps scanning.
+  const deferLaunch =
+    action === "BUY" &&
+    DeferredLaunchQueue.shouldDeferLaunch(working, config);
+
+  if (deferLaunch) {
+    reasons.push(
+      `defer: min launch age ${Math.round(config.MIN_LAUNCH_AGE_MS / 1000)}s — wait then re-check liq`,
+    );
+  } else if (action === "BUY" && client) {
+    // Non-launch (or age disabled): settle + sellable immediately
     const gates = await assertBuyGates(client, working, config);
     working = gates.candidate;
     reasons.push(...gates.reasons.map((r) => `gate: ${r}`));
@@ -147,14 +161,17 @@ export async function handleCandidate(
   } else if (
     action === "BUY" &&
     !client &&
-    (config.REQUIRE_SELLABLE_QUOTE || config.LAUNCH_LIQ_SETTLE_MS > 0)
+    (config.REQUIRE_SELLABLE_QUOTE ||
+      config.LAUNCH_LIQ_SETTLE_MS > 0 ||
+      config.MIN_LAUNCH_AGE_MS > 0)
   ) {
     action = "SKIP";
     reasons.push("gate: no RPC client for sellable/settle checks");
   }
 
+  const signalAction = deferLaunch ? "WATCH" : action;
   reasons.push(
-    `final score=${finalScore} → ${action} (buy≥${config.BUY_SCORE_THRESHOLD}, watch≥${config.WATCH_SCORE_THRESHOLD})`,
+    `final score=${finalScore} → ${signalAction}${deferLaunch ? " (deferred)" : ""} (buy≥${config.BUY_SCORE_THRESHOLD}, watch≥${config.WATCH_SCORE_THRESHOLD})`,
   );
 
   const signalId = db.insertSignal({
@@ -165,7 +182,7 @@ export async function handleCandidate(
     pair_or_pool: working.pairOrPool,
     fee: working.fee,
     score: finalScore,
-    action,
+    action: signalAction,
     reasons: reasons.join("; "),
     initial_liquidity_eth: working.initialLiquidityEth,
     tx_hash: working.txHash,
@@ -173,10 +190,15 @@ export async function handleCandidate(
   });
 
   logLine(
-    `SIGNAL ${action} ${working.symbol} (${working.token}) score=${finalScore.toFixed(1)} dex=${working.dex} #${signalId}`,
+    `SIGNAL ${signalAction} ${working.symbol} (${working.token}) score=${finalScore.toFixed(1)} dex=${working.dex} #${signalId}`,
   );
   for (const r of reasons.slice(0, 10)) {
     logLine(`  · ${r}`);
+  }
+
+  if (deferLaunch) {
+    deferredLaunchQueue.enqueueLaunch(working, signalId, config);
+    return;
   }
 
   if (action !== "BUY") return;

@@ -12,6 +12,8 @@ import { startTrendingPoller } from "../ingest/trending.js";
 import { runLearningPass } from "../learning/engine.js";
 import { robinhoodChain } from "../chain/addresses.js";
 import { applyRuntimeOverrides } from "../runtime/configStore.js";
+import { deferredLaunchQueue } from "../risk/deferredLaunch.js";
+import type { RhPublicClient } from "../chain/client.js";
 
 function logLine(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -48,8 +50,10 @@ export class BotRunner {
   private stopIngest: (() => void) | null = null;
   private stopTrending: (() => void) | null = null;
   private markTimer: ReturnType<typeof setInterval> | null = null;
+  private deferTimer: ReturnType<typeof setInterval> | null = null;
   private learnTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private watchClient: RhPublicClient | null = null;
 
   constructor(config: AppConfig, db?: BotDb) {
     this.config = config;
@@ -152,6 +156,11 @@ export class BotRunner {
           `moon runners on max=${this.config.MAX_MOON_POSITIONS} arm≥${this.config.MOON_ARM_PNL_PCT}%`,
         );
       }
+      if (this.config.MIN_LAUNCH_AGE_MS > 0) {
+        logLine(
+          `min launch age ${Math.round(this.config.MIN_LAUNCH_AGE_MS / 1000)}s before BUY (probe every ${Math.round(this.config.LAUNCH_LIQ_PROBE_MS / 1000)}s)`,
+        );
+      }
 
       if (this.config.LEARNING_MODE && this.config.EXECUTION_MODE === "paper") {
         const boot = runLearningPass(this.db, this.config.LEARN_MIN_SAMPLES);
@@ -169,6 +178,7 @@ export class BotRunner {
 
       const paper = this.paper;
       const live = this.live;
+      this.watchClient = watchClient;
       this.stopIngest = await startIngest(watchClient, this.config, (c) => {
         this.beat();
         return handleCandidate(c, this.config, this.db, paper, live, {}, watchClient);
@@ -193,6 +203,21 @@ export class BotRunner {
           console.error(`mark/exit error: ${this.error}`);
         }
       }, this.config.markIntervalMs);
+
+      // Deferred launch buys: probe / release every few seconds (non-blocking min-age)
+      if (this.config.MIN_LAUNCH_AGE_MS > 0) {
+        const deferMs = Math.min(
+          Math.max(this.config.LAUNCH_LIQ_PROBE_MS || 5_000, 5_000),
+          15_000,
+        );
+        this.deferTimer = setInterval(() => {
+          void deferredLaunchQueue
+            .processDue(watchClient, this.config, this.db, paper, live)
+            .catch((err) =>
+              console.error(`defer queue error: ${(err as Error).message}`),
+            );
+        }, deferMs);
+      }
 
       if (this.config.LEARNING_MODE && this.config.LEARN_INTERVAL_MS > 0) {
         this.learnTimer = setInterval(() => {
@@ -226,11 +251,14 @@ export class BotRunner {
     logLine("bot STOPPING…");
 
     if (this.markTimer) clearInterval(this.markTimer);
+    if (this.deferTimer) clearInterval(this.deferTimer);
     if (this.learnTimer) clearInterval(this.learnTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.markTimer = null;
+    this.deferTimer = null;
     this.learnTimer = null;
     this.heartbeatTimer = null;
+    this.watchClient = null;
 
     try {
       this.stopTrending?.();
