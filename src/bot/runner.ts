@@ -158,7 +158,11 @@ export class BotRunner {
       }
       if (this.config.MIN_LAUNCH_AGE_MS > 0) {
         logLine(
-          `min launch age ${Math.round(this.config.MIN_LAUNCH_AGE_MS / 1000)}s before BUY (probe every ${Math.round(this.config.LAUNCH_LIQ_PROBE_MS / 1000)}s)`,
+          `min launch age ${Math.round(this.config.MIN_LAUNCH_AGE_MS / 1000)}s` +
+            (this.config.LAUNCH_CONFIRM_MS > 0
+              ? ` + confirm ${Math.round(this.config.LAUNCH_CONFIRM_MS / 1000)}s`
+              : "") +
+            ` before BUY (probe every ${Math.round(this.config.LAUNCH_LIQ_PROBE_MS / 1000)}s)`,
         );
       }
 

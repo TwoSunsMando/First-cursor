@@ -293,6 +293,26 @@ export class LiveGateway {
       signal_id: row.signal_id,
     });
 
+    // Snapshot pool WETH at entry for early LP-drain bailout
+    try {
+      const entryLiq = await rereadPoolLiquidityEth(this.publicClient, {
+        token,
+        symbol: row.symbol,
+        name: row.symbol,
+        dex,
+        pairOrPool: row.pair_or_pool as Address,
+        fee: row.fee,
+        initialLiquidityEth: null,
+        txHash: null,
+        source: dex === "v3" ? "uniswap_v3" : dex === "noxa" ? "noxa" : "uniswap_v2",
+      });
+      if (entryLiq != null) {
+        this.db.setMeta(`entry_liq_${positionId}`, String(entryLiq));
+      }
+    } catch {
+      /* best-effort */
+    }
+
     this.db.addDailySpend(row.size_eth);
     this.db.setApprovalStatus(approvalId, "executed", { executed_tx: txHash });
     logLine(`LIVE OPEN #${positionId} ${row.symbol} ${row.size_eth} ETH tx=${txHash}`);
@@ -302,6 +322,52 @@ export class LiveGateway {
     const opens = this.db.listOpenPositions("live");
     const ethUsd = opens.length ? await getEthUsd().catch(() => 0) : 0;
     for (let pos of opens) {
+      // Early LP-drain bailout: rugs that survive defer then yank after buy
+      if (
+        this.config.EARLY_RUG_WINDOW_MS > 0 &&
+        (pos.dex === "v2" || pos.dex === "v3")
+      ) {
+        const ageMs = Date.now() - Date.parse(pos.opened_at);
+        if (ageMs >= 0 && ageMs <= this.config.EARLY_RUG_WINDOW_MS) {
+          const entryLiqRaw = this.db.getMeta(`entry_liq_${pos.id}`);
+          const entryLiq = entryLiqRaw != null ? Number(entryLiqRaw) : NaN;
+          const liqNow = await rereadPoolLiquidityEth(this.publicClient, {
+            token: pos.token as Address,
+            symbol: pos.symbol,
+            name: pos.symbol,
+            dex: pos.dex,
+            pairOrPool: pos.pair_or_pool as Address,
+            fee: pos.fee,
+            initialLiquidityEth: null,
+            txHash: null,
+            source: pos.dex === "v3" ? "uniswap_v3" : "uniswap_v2",
+          });
+          const frac = this.config.EARLY_RUG_LIQ_FRACTION;
+          const drained =
+            liqNow != null &&
+            ((Number.isFinite(entryLiq) &&
+              entryLiq > 0 &&
+              liqNow < entryLiq * frac) ||
+              liqNow < this.config.MIN_LAUNCH_LIQUIDITY_ETH * 0.25);
+          if (drained) {
+            logLine(
+              `EARLY RUG #${pos.id} ${pos.symbol}: pool WETH ${liqNow?.toFixed(4) ?? "?"} (entry ${Number.isFinite(entryLiq) ? entryLiq.toFixed(3) : "?"}) — emergency sell`,
+            );
+            try {
+              await this.executeSellPosition(
+                pos.id,
+                `early_lp_drain liq=${liqNow?.toFixed(4)}`,
+              );
+            } catch (err) {
+              logLine(
+                `EARLY RUG sell failed #${pos.id}: ${(err as Error).message.slice(0, 160)}`,
+              );
+            }
+            continue;
+          }
+        }
+      }
+
       const meta = await readTokenMeta(this.publicClient, pos.token as Address);
       const price =
         (await quoteTokenPriceEth(

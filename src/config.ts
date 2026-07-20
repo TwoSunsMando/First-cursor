@@ -80,6 +80,19 @@ const ConfigSchema = z
     /** While deferred, re-check pool WETH this often and abort on rug. 0 = only check at ready. */
     LAUNCH_LIQ_PROBE_MS: z.coerce.number().int().nonnegative().default(20_000),
     /**
+     * After min-age survives, wait this extra window and re-check liq again before BUY.
+     * Catches delayed rugs that keep LP up for ~2m then pull (eeepy/Emma pattern).
+     * 0 = buy immediately after age. Default 90s.
+     */
+    LAUNCH_CONFIRM_MS: z.coerce.number().int().nonnegative().default(90_000),
+    /**
+     * Live: if pool WETH falls below this fraction of entry pool WETH within
+     * EARLY_RUG_WINDOW_MS, force an emergency sell attempt (LP drain bailout).
+     */
+    EARLY_RUG_LIQ_FRACTION: z.coerce.number().min(0).max(1).default(0.4),
+    /** Live early-rug detector window after open (ms). 0 = disable. */
+    EARLY_RUG_WINDOW_MS: z.coerce.number().int().nonnegative().default(600_000),
+    /**
      * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
      * Used for score sweet-spot bonus and BUY confirmation.
      */

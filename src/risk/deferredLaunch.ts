@@ -13,9 +13,13 @@ export interface DeferredLaunch {
   candidate: CandidateToken;
   /** Liquidity snapshot at first detect (for drop check). */
   liqAtDetect: number | null;
+  /** Highest WETH seen during wait — reject if we give back from peak. */
+  peakLiq: number | null;
   readyAt: number;
   signalId: number;
   enqueuedAt: number;
+  /** age = waiting min age; confirm = extra stability window after first survive */
+  phase: "age" | "confirm";
   lastProbeAt?: number;
   aborted?: string;
 }
@@ -32,9 +36,19 @@ function logLine(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
+function dropTooHard(
+  from: number,
+  to: number,
+  maxDropPct: number,
+): number | null {
+  if (maxDropPct <= 0 || from <= 0) return null;
+  const dropPct = ((from - to) / from) * 100;
+  return dropPct >= maxDropPct ? dropPct : null;
+}
+
 /**
  * Non-blocking post-launch wait: enqueue BUYs, re-check liq+sellable when due.
- * Avoids sleeping inside the scan poller (which would miss blocks).
+ * Phase 1 = MIN_LAUNCH_AGE_MS; Phase 2 = LAUNCH_CONFIRM_MS stability window.
  */
 export class DeferredLaunchQueue {
   private items: DeferredLaunch[] = [];
@@ -44,7 +58,6 @@ export class DeferredLaunchQueue {
     return this.items.length;
   }
 
-  /** True if launch sources must wait MIN_LAUNCH_AGE_MS before buy. */
   static shouldDeferLaunch(candidate: CandidateToken, config: AppConfig): boolean {
     return config.MIN_LAUNCH_AGE_MS > 0 && isLaunchSource(candidate.source);
   }
@@ -58,16 +71,22 @@ export class DeferredLaunchQueue {
     const readyAt = enqueuedAt + config.MIN_LAUNCH_AGE_MS;
     const key = candidate.token.toLowerCase();
     this.items = this.items.filter((x) => x.candidate.token.toLowerCase() !== key);
+    const liq = candidate.initialLiquidityEth;
     this.items.push({
       candidate,
-      liqAtDetect: candidate.initialLiquidityEth,
+      liqAtDetect: liq,
+      peakLiq: liq,
       readyAt,
       signalId,
       enqueuedAt,
+      phase: "age",
     });
     const waitSec = Math.round(config.MIN_LAUNCH_AGE_MS / 1000);
+    const confSec = Math.round(config.LAUNCH_CONFIRM_MS / 1000);
     logLine(
-      `DEFER BUY ${candidate.symbol} ${waitSec}s min-age (liq=${candidate.initialLiquidityEth?.toFixed(3) ?? "?"} ETH) signal=#${signalId} queue=${this.items.length}`,
+      `DEFER BUY ${candidate.symbol} age=${waitSec}s` +
+        (confSec > 0 ? `+confirm=${confSec}s` : "") +
+        ` (liq=${liq?.toFixed(3) ?? "?"} ETH) signal=#${signalId} queue=${this.items.length}`,
     );
   }
 
@@ -83,7 +102,6 @@ export class DeferredLaunchQueue {
     try {
       const now = Date.now();
 
-      // Mid-wait probes: abort early if LP already yanked (don't wait full min-age)
       if (config.LAUNCH_LIQ_PROBE_MS > 0) {
         for (const item of this.items) {
           if (item.readyAt <= now || item.aborted) continue;
@@ -96,21 +114,28 @@ export class DeferredLaunchQueue {
 
           const liqNow = await rereadPoolLiquidityEth(client, item.candidate);
           if (liqNow == null) continue;
+          if (item.peakLiq == null || liqNow > item.peakLiq) item.peakLiq = liqNow;
+
           if (liqNow < config.MIN_LAUNCH_LIQUIDITY_ETH) {
             item.aborted = `mid-wait liq ${liqNow.toFixed(4)} ETH < min`;
-            item.readyAt = now; // process as abort on next due pass
+            item.readyAt = now;
             logLine(`DEFER ABORT ${item.candidate.symbol}: ${item.aborted}`);
             continue;
           }
-          if (
-            item.liqAtDetect != null &&
-            item.liqAtDetect > 0 &&
-            config.LAUNCH_LIQ_DROP_MAX_PCT > 0
-          ) {
-            const dropPct =
-              ((item.liqAtDetect - liqNow) / item.liqAtDetect) * 100;
-            if (dropPct >= config.LAUNCH_LIQ_DROP_MAX_PCT) {
-              item.aborted = `mid-wait drop ${dropPct.toFixed(0)}% (${item.liqAtDetect.toFixed(3)}→${liqNow.toFixed(3)})`;
+          const fromDetect = item.liqAtDetect;
+          if (fromDetect != null) {
+            const d = dropTooHard(fromDetect, liqNow, config.LAUNCH_LIQ_DROP_MAX_PCT);
+            if (d != null) {
+              item.aborted = `mid-wait drop ${d.toFixed(0)}% from detect (${fromDetect.toFixed(3)}→${liqNow.toFixed(3)})`;
+              item.readyAt = now;
+              logLine(`DEFER ABORT ${item.candidate.symbol}: ${item.aborted}`);
+              continue;
+            }
+          }
+          if (item.peakLiq != null) {
+            const d = dropTooHard(item.peakLiq, liqNow, config.LAUNCH_LIQ_DROP_MAX_PCT);
+            if (d != null) {
+              item.aborted = `mid-wait drop ${d.toFixed(0)}% from peak (${item.peakLiq.toFixed(3)}→${liqNow.toFixed(3)})`;
               item.readyAt = now;
               logLine(`DEFER ABORT ${item.candidate.symbol}: ${item.aborted}`);
             }
@@ -126,11 +151,87 @@ export class DeferredLaunchQueue {
           logLine(`DEFER SKIP ${item.candidate.symbol}: ${item.aborted}`);
           continue;
         }
+
+        // End of age phase → optional confirm window (catches delayed rugs that look fine at 2m)
+        if (item.phase === "age" && config.LAUNCH_CONFIRM_MS > 0) {
+          const check = await this.liqStillHealthy(client, item, config);
+          if (!check.ok) {
+            logLine(`DEFER SKIP ${item.candidate.symbol}: ${check.reason}`);
+            continue;
+          }
+          item.phase = "confirm";
+          item.readyAt = Date.now() + config.LAUNCH_CONFIRM_MS;
+          if (check.liq != null) {
+            item.candidate = {
+              ...item.candidate,
+              initialLiquidityEth: check.liq,
+            };
+            if (item.peakLiq == null || check.liq > item.peakLiq) {
+              item.peakLiq = check.liq;
+            }
+          }
+          this.items.push(item);
+          logLine(
+            `DEFER CONFIRM ${item.candidate.symbol}: age ok liq=${check.liq?.toFixed(4) ?? "?"} — wait ${Math.round(config.LAUNCH_CONFIRM_MS / 1000)}s more`,
+          );
+          continue;
+        }
+
         await this.executeAged(item, client, config, db, paper, live);
       }
     } finally {
       this.busy = false;
     }
+  }
+
+  private async liqStillHealthy(
+    client: RhPublicClient,
+    item: DeferredLaunch,
+    config: AppConfig,
+  ): Promise<{ ok: boolean; reason: string; liq: number | null }> {
+    const { candidate } = item;
+    if (candidate.dex !== "v2" && candidate.dex !== "v3") {
+      return { ok: true, reason: "noxa", liq: candidate.initialLiquidityEth };
+    }
+    const liqNow = await rereadPoolLiquidityEth(client, candidate);
+    if (liqNow == null && config.REJECT_NULL_LIQUIDITY) {
+      return { ok: false, reason: "pool WETH unreadable", liq: null };
+    }
+    if (liqNow == null) {
+      return { ok: true, reason: "liq unknown allowed", liq: null };
+    }
+    if (liqNow < config.MIN_LAUNCH_LIQUIDITY_ETH) {
+      return {
+        ok: false,
+        reason: `liq ${liqNow.toFixed(4)} < min ${config.MIN_LAUNCH_LIQUIDITY_ETH} (likely rug)`,
+        liq: liqNow,
+      };
+    }
+    if (item.liqAtDetect != null) {
+      const d = dropTooHard(
+        item.liqAtDetect,
+        liqNow,
+        config.LAUNCH_LIQ_DROP_MAX_PCT,
+      );
+      if (d != null) {
+        return {
+          ok: false,
+          reason: `WETH dropped ${d.toFixed(0)}% from detect (${item.liqAtDetect.toFixed(3)}→${liqNow.toFixed(3)})`,
+          liq: liqNow,
+        };
+      }
+    }
+    if (item.peakLiq != null) {
+      const d = dropTooHard(item.peakLiq, liqNow, config.LAUNCH_LIQ_DROP_MAX_PCT);
+      if (d != null) {
+        return {
+          ok: false,
+          reason: `WETH dropped ${d.toFixed(0)}% from peak (${item.peakLiq.toFixed(3)}→${liqNow.toFixed(3)})`,
+          liq: liqNow,
+        };
+      }
+    }
+    return { ok: true, reason: "ok", liq: liqNow };
   }
 
   private async executeAged(
@@ -143,46 +244,19 @@ export class DeferredLaunchQueue {
   ): Promise<void> {
     const { candidate } = item;
     const waitSec = Math.round((Date.now() - item.enqueuedAt) / 1000);
+    const check = await this.liqStillHealthy(client, item, config);
+    if (!check.ok) {
+      logLine(`DEFER SKIP ${candidate.symbol}: after ${waitSec}s ${check.reason}`);
+      return;
+    }
     let next = candidate;
-
-    if (candidate.dex === "v2" || candidate.dex === "v3") {
-      const liqNow = await rereadPoolLiquidityEth(client, candidate);
-      if (liqNow == null && config.REJECT_NULL_LIQUIDITY) {
-        logLine(
-          `DEFER SKIP ${candidate.symbol}: pool WETH unreadable after ${waitSec}s`,
-        );
-        return;
-      }
-      if (liqNow != null) {
-        next = { ...candidate, initialLiquidityEth: liqNow };
-        if (liqNow < config.MIN_LAUNCH_LIQUIDITY_ETH) {
-          logLine(
-            `DEFER SKIP ${candidate.symbol}: after ${waitSec}s liq ${liqNow.toFixed(4)} < min ${config.MIN_LAUNCH_LIQUIDITY_ETH} (likely rug)`,
-          );
-          return;
-        }
-        if (
-          item.liqAtDetect != null &&
-          item.liqAtDetect > 0 &&
-          config.LAUNCH_LIQ_DROP_MAX_PCT > 0
-        ) {
-          const dropPct =
-            ((item.liqAtDetect - liqNow) / item.liqAtDetect) * 100;
-          if (dropPct >= config.LAUNCH_LIQ_DROP_MAX_PCT) {
-            logLine(
-              `DEFER SKIP ${candidate.symbol}: after ${waitSec}s WETH dropped ${dropPct.toFixed(0)}% (${item.liqAtDetect.toFixed(3)}→${liqNow.toFixed(3)}) — rug pattern`,
-            );
-            return;
-          }
-        }
-        logLine(
-          `DEFER OK ${candidate.symbol}: survived ${waitSec}s liq=${liqNow.toFixed(4)} ETH (was ${item.liqAtDetect?.toFixed(3) ?? "?"})`,
-        );
-      }
-    } else {
+    if (check.liq != null) {
+      next = { ...candidate, initialLiquidityEth: check.liq };
       logLine(
-        `DEFER OK ${candidate.symbol}: waited ${waitSec}s (noxa, no pool recheck)`,
+        `DEFER OK ${candidate.symbol}: survived ${waitSec}s liq=${check.liq.toFixed(4)} ETH (detect ${item.liqAtDetect?.toFixed(3) ?? "?"} peak ${item.peakLiq?.toFixed(3) ?? "?"})`,
       );
+    } else {
+      logLine(`DEFER OK ${candidate.symbol}: waited ${waitSec}s`);
     }
 
     const sellable = await checkSellableRoundtrip(client, next, config);
@@ -211,7 +285,7 @@ export class DeferredLaunchQueue {
       fee: next.fee,
       score: 0,
       action: "BUY",
-      reasons: `deferred min-age ${waitSec}s; ${sellable.reason}; from signal #${item.signalId}`,
+      reasons: `deferred ${waitSec}s (${item.phase}); ${sellable.reason}; from signal #${item.signalId}`,
       initial_liquidity_eth: next.initialLiquidityEth,
       tx_hash: next.txHash,
       source: next.source,
@@ -227,5 +301,4 @@ export class DeferredLaunchQueue {
   }
 }
 
-/** Shared queue instance used by ingest + runner mark loop. */
 export const deferredLaunchQueue = new DeferredLaunchQueue();

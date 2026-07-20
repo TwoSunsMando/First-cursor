@@ -148,7 +148,11 @@ export async function handleCandidate(
 
   if (deferLaunch) {
     reasons.push(
-      `defer: min launch age ${Math.round(config.MIN_LAUNCH_AGE_MS / 1000)}s — wait then re-check liq`,
+      `defer: min launch age ${Math.round(config.MIN_LAUNCH_AGE_MS / 1000)}s` +
+        (config.LAUNCH_CONFIRM_MS > 0
+          ? `+confirm ${Math.round(config.LAUNCH_CONFIRM_MS / 1000)}s`
+          : "") +
+        ` — wait then re-check liq`,
     );
   } else if (action === "BUY" && client) {
     // Non-launch (or age disabled): settle + sellable immediately
