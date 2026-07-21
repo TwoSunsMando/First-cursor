@@ -19,6 +19,10 @@ async function main() {
   // Synthetic SMOKE token has no pool — disable on-chain anti-rug gates for this harness.
   (config as { REQUIRE_SELLABLE_QUOTE: boolean }).REQUIRE_SELLABLE_QUOTE = false;
   (config as { LAUNCH_LIQ_SETTLE_MS: number }).LAUNCH_LIQ_SETTLE_MS = 0;
+  (config as { MIN_LAUNCH_AGE_MS: number }).MIN_LAUNCH_AGE_MS = 0;
+  (config as { REQUIRE_ONCHAIN_APPRECIATION: boolean }).REQUIRE_ONCHAIN_APPRECIATION =
+    false;
+  (config as { REQUIRE_LAUNCH_MOMENTUM: boolean }).REQUIRE_LAUNCH_MOMENTUM = false;
   (config as { REJECT_NULL_LIQUIDITY: boolean }).REJECT_NULL_LIQUIDITY = false;
 
   const dbPath = "./data/smoke.db";

@@ -138,14 +138,14 @@ export class BotRunner {
         if (this.config.AUTO_APPROVE_BUYS) {
           logLine("AUTO_APPROVE_BUYS=on — buys execute without Yes/No");
         }
-        if (this.config.LIVE_LAUNCH_ONLY) {
-          logLine("LIVE_LAUNCH_ONLY=on — buys only noxa/v2/v3 launches");
-        }
         if (this.config.AUTO_SELL) {
           logLine("AUTO_SELL=on — exits/trims execute without Yes/No");
         }
       } else {
         logLine("PAPER mode");
+      }
+      if (this.config.ENTRY_LAUNCH_ONLY || this.config.LIVE_LAUNCH_ONLY) {
+        logLine("ENTRY_LAUNCH_ONLY — buys only noxa/v2/v3 (no trending/boost)");
       }
 
       logLine(
@@ -166,7 +166,10 @@ export class BotRunner {
         );
         if (this.config.REQUIRE_LAUNCH_MOMENTUM) {
           logLine(
-            `launch momentum required: Δ≥${this.config.LAUNCH_MOMENTUM_MIN_DELTA_PCT}% or vol≥${this.config.LAUNCH_MOMENTUM_MIN_VOL_ETH}ETH or buys≥${this.config.LAUNCH_MOMENTUM_MIN_BUYS}` +
+            `confirm-then-enter: Δ≥${this.config.LAUNCH_MOMENTUM_MIN_DELTA_PCT}% AND vol≥${this.config.LAUNCH_MOMENTUM_MIN_VOL_ETH}ETH AND buys≥${this.config.LAUNCH_MOMENTUM_MIN_BUYS}` +
+              (this.config.REQUIRE_ONCHAIN_APPRECIATION
+                ? `; on-chain +${this.config.LAUNCH_MIN_APPRECIATION_PCT}% during defer`
+                : "") +
               (this.config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH > 0
                 ? `; entry liq≥${this.config.MIN_LAUNCH_ENTRY_LIQUIDITY_ETH}`
                 : ""),

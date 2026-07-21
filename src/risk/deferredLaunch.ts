@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config.js";
 import type { BotDb } from "../db/schema.js";
 import type { RhPublicClient } from "../chain/client.js";
+import { quoteTokenPriceEth } from "../chain/pricing.js";
 import type { PaperEngine } from "../paper/engine.js";
 import type { LiveGateway } from "../live/gateway.js";
 import type { CandidateToken } from "./filters.js";
@@ -17,6 +18,10 @@ export interface DeferredLaunch {
   liqAtDetect: number | null;
   /** Highest WETH seen during wait — reject if we give back from peak. */
   peakLiq: number | null;
+  /** Mid price (ETH/token) at first successful quote during defer. */
+  priceAtDetect: number | null;
+  /** Highest mid price seen during wait. */
+  peakPrice: number | null;
   readyAt: number;
   signalId: number;
   enqueuedAt: number;
@@ -48,7 +53,16 @@ function dropTooHard(
   return dropPct >= maxDropPct ? dropPct : null;
 }
 
-/** DexPaprika 15m momentum gate — any one leg can pass. */
+function gainPct(from: number, to: number): number {
+  if (from <= 0) return 0;
+  return ((to - from) / from) * 100;
+}
+
+/**
+ * Confirm-then-enter momentum gate.
+ * Positive 15m Δ is mandatory; vol/buys are AND confirmers — never enough alone.
+ * (OR-gate previously bought dumps like MEOW: Δ=-37% but vol/buys “ok”.)
+ */
 export function evaluateLaunchMomentum(
   extras: ScoreExtras,
   config: AppConfig,
@@ -75,40 +89,71 @@ export function evaluateLaunchMomentum(
   }
   parts.push(`vol=${vol.toFixed(2)}ETH`);
   parts.push(`buys=${buys}`);
+  const snap = parts.join(" ");
 
-  const hitDelta =
-    needDelta > 0 && delta != null && Number.isFinite(delta) && delta >= needDelta;
-  const hitVol = needVol > 0 && vol >= needVol;
-  const hitBuys = needBuys > 0 && buys >= needBuys;
-  if (hitDelta || hitVol || hitBuys) {
-    const how = [
-      hitDelta ? `Δ≥${needDelta}%` : null,
-      hitVol ? `vol≥${needVol}` : null,
-      hitBuys ? `buys≥${needBuys}` : null,
-    ]
-      .filter(Boolean)
-      .join("|");
-    return { ok: true, reason: `momentum ok (${how}; ${parts.join(" ")})` };
-  }
-
-  // No DexPaprika data at all → fail closed (brand-new rugs often have empty summaries)
-  const noData =
-    (delta == null || !Number.isFinite(delta)) && vol <= 0 && buys <= 0;
-  if (noData) {
+  // Hard dump guard — never buy known negative 15m even if vol thresholds are 0
+  if (delta != null && Number.isFinite(delta) && delta < 0) {
     return {
       ok: false,
-      reason: `momentum missing (no DexPaprika 15m yet; need Δ≥${needDelta}% or vol≥${needVol} or buys≥${needBuys})`,
+      reason: `momentum dump (${snap}; refuse negative 15m Δ)`,
     };
   }
-  return {
-    ok: false,
-    reason: `momentum weak (${parts.join(" ")}; need Δ≥${needDelta}% or vol≥${needVol}ETH or buys≥${needBuys})`,
-  };
+
+  if (needDelta > 0) {
+    if (delta == null || !Number.isFinite(delta)) {
+      return {
+        ok: false,
+        reason: `momentum missing Δ (${snap}; need Δ≥${needDelta}% mandatory)`,
+      };
+    }
+    if (delta < needDelta) {
+      return {
+        ok: false,
+        reason: `momentum weak Δ (${snap}; need Δ≥${needDelta}% mandatory)`,
+      };
+    }
+  }
+
+  if (needVol > 0 && vol < needVol) {
+    return {
+      ok: false,
+      reason: `momentum weak vol (${snap}; need vol≥${needVol}ETH AND Δ)`,
+    };
+  }
+  if (needBuys > 0 && buys < needBuys) {
+    return {
+      ok: false,
+      reason: `momentum weak buys (${snap}; need buys≥${needBuys} AND Δ)`,
+    };
+  }
+
+  const how = [
+    needDelta > 0 ? `Δ≥${needDelta}%` : null,
+    needVol > 0 ? `vol≥${needVol}` : null,
+    needBuys > 0 ? `buys≥${needBuys}` : null,
+  ]
+    .filter(Boolean)
+    .join("+");
+  return { ok: true, reason: `momentum ok (${how}; ${snap})` };
+}
+
+async function readMidPrice(
+  client: RhPublicClient,
+  candidate: CandidateToken,
+): Promise<number | null> {
+  return quoteTokenPriceEth(
+    client,
+    candidate.token,
+    candidate.dex,
+    candidate.pairOrPool,
+    candidate.fee,
+  );
 }
 
 /**
- * Non-blocking post-launch wait: enqueue BUYs, re-check liq+sellable when due.
+ * Non-blocking post-launch wait: enqueue BUYs, re-check liq+price+sellable when due.
  * Phase 1 = MIN_LAUNCH_AGE_MS; Phase 2 = LAUNCH_CONFIRM_MS stability window.
+ * Strategy: confirm strength (price up + positive Δ), do not snipe “still alive”.
  */
 export class DeferredLaunchQueue {
   private items: DeferredLaunch[] = [];
@@ -126,21 +171,25 @@ export class DeferredLaunchQueue {
     candidate: CandidateToken,
     signalId: number,
     config: AppConfig,
+    client?: RhPublicClient | null,
   ): void {
     const enqueuedAt = Date.now();
     const readyAt = enqueuedAt + config.MIN_LAUNCH_AGE_MS;
     const key = candidate.token.toLowerCase();
     this.items = this.items.filter((x) => x.candidate.token.toLowerCase() !== key);
     const liq = candidate.initialLiquidityEth;
-    this.items.push({
+    const item: DeferredLaunch = {
       candidate,
       liqAtDetect: liq,
       peakLiq: liq,
+      priceAtDetect: null,
+      peakPrice: null,
       readyAt,
       signalId,
       enqueuedAt,
       phase: "age",
-    });
+    };
+    this.items.push(item);
     const waitSec = Math.round(config.MIN_LAUNCH_AGE_MS / 1000);
     const confSec = Math.round(config.LAUNCH_CONFIRM_MS / 1000);
     logLine(
@@ -148,6 +197,23 @@ export class DeferredLaunchQueue {
         (confSec > 0 ? `+confirm=${confSec}s` : "") +
         ` (liq=${liq?.toFixed(3) ?? "?"} ETH) signal=#${signalId} queue=${this.items.length}`,
     );
+    if (client) {
+      void this.snapshotPrice(client, item);
+    }
+  }
+
+  private async snapshotPrice(
+    client: RhPublicClient,
+    item: DeferredLaunch,
+  ): Promise<void> {
+    try {
+      const px = await readMidPrice(client, item.candidate);
+      if (px == null || !(px > 0)) return;
+      if (item.priceAtDetect == null) item.priceAtDetect = px;
+      if (item.peakPrice == null || px > item.peakPrice) item.peakPrice = px;
+    } catch {
+      // best-effort; executeAged will fail closed if appreciation required
+    }
   }
 
   async processDue(
@@ -171,6 +237,43 @@ export class DeferredLaunchQueue {
           const last = item.lastProbeAt ?? 0;
           if (now - last < config.LAUNCH_LIQ_PROBE_MS) continue;
           item.lastProbeAt = now;
+
+          {
+            const px = await readMidPrice(client, item.candidate);
+            if (px != null && px > 0) {
+              const fromPeak = item.peakPrice ?? item.priceAtDetect;
+              if (fromPeak != null) {
+                const d = dropTooHard(
+                  fromPeak,
+                  px,
+                  config.LAUNCH_PRICE_DROP_MAX_PCT,
+                );
+                if (d != null) {
+                  item.aborted = `mid-wait price drop ${d.toFixed(0)}% from peak`;
+                  item.readyAt = now;
+                  logLine(`DEFER ABORT ${item.candidate.symbol}: ${item.aborted}`);
+                  continue;
+                }
+              }
+              if (item.priceAtDetect != null) {
+                const d = dropTooHard(
+                  item.priceAtDetect,
+                  px,
+                  config.LAUNCH_PRICE_DROP_MAX_PCT,
+                );
+                if (d != null) {
+                  item.aborted = `mid-wait price drop ${d.toFixed(0)}% from detect`;
+                  item.readyAt = now;
+                  logLine(`DEFER ABORT ${item.candidate.symbol}: ${item.aborted}`);
+                  continue;
+                }
+              }
+              if (item.priceAtDetect == null) item.priceAtDetect = px;
+              if (item.peakPrice == null || px > item.peakPrice) {
+                item.peakPrice = px;
+              }
+            }
+          }
 
           const liqNow = await rereadPoolLiquidityEth(client, item.candidate);
           if (liqNow == null) continue;
@@ -230,9 +333,16 @@ export class DeferredLaunchQueue {
               item.peakLiq = check.liq;
             }
           }
+          if (item.priceAtDetect == null) {
+            await this.snapshotPrice(client, item);
+          }
           this.items.push(item);
           logLine(
-            `DEFER CONFIRM ${item.candidate.symbol}: age ok liq=${check.liq?.toFixed(4) ?? "?"} — wait ${Math.round(config.LAUNCH_CONFIRM_MS / 1000)}s more`,
+            `DEFER CONFIRM ${item.candidate.symbol}: age ok liq=${check.liq?.toFixed(4) ?? "?"}` +
+              (item.priceAtDetect != null
+                ? ` px=${item.priceAtDetect.toExponential(3)}`
+                : "") +
+              ` — wait ${Math.round(config.LAUNCH_CONFIRM_MS / 1000)}s more`,
           );
           continue;
         }
@@ -294,6 +404,63 @@ export class DeferredLaunchQueue {
     return { ok: true, reason: "ok", liq: liqNow };
   }
 
+  private async assertOnchainAppreciation(
+    client: RhPublicClient,
+    item: DeferredLaunch,
+    config: AppConfig,
+  ): Promise<{ ok: boolean; reason: string }> {
+    if (!config.REQUIRE_ONCHAIN_APPRECIATION) {
+      return { ok: true, reason: "on-chain appreciation disabled" };
+    }
+    const need = config.LAUNCH_MIN_APPRECIATION_PCT;
+    if (need <= 0) {
+      return { ok: true, reason: "appreciation threshold 0" };
+    }
+
+    if (item.priceAtDetect == null) {
+      await this.snapshotPrice(client, item);
+    }
+    const baseline = item.priceAtDetect;
+    if (baseline == null || !(baseline > 0)) {
+      return {
+        ok: false,
+        reason: "on-chain price missing at defer (fail closed — cannot confirm strength)",
+      };
+    }
+
+    const nowPx = await readMidPrice(client, item.candidate);
+    if (nowPx == null || !(nowPx > 0)) {
+      return {
+        ok: false,
+        reason: "on-chain price unreadable at execute (fail closed)",
+      };
+    }
+
+    const peak = item.peakPrice ?? baseline;
+    const dropFromPeak = dropTooHard(peak, nowPx, config.LAUNCH_PRICE_DROP_MAX_PCT);
+    if (dropFromPeak != null) {
+      return {
+        ok: false,
+        reason: `on-chain giveback ${dropFromPeak.toFixed(0)}% from peak during defer`,
+      };
+    }
+    if (item.peakPrice == null || nowPx > item.peakPrice) {
+      item.peakPrice = nowPx;
+    }
+
+    const g = gainPct(baseline, nowPx);
+    if (g < need) {
+      return {
+        ok: false,
+        reason: `on-chain flat/down (${g.toFixed(1)}% vs need +${need}% from defer quote)`,
+      };
+    }
+    return {
+      ok: true,
+      reason: `on-chain up +${g.toFixed(1)}% during defer (need ≥${need}%)`,
+    };
+  }
+
   private async executeAged(
     item: DeferredLaunch,
     client: RhPublicClient,
@@ -334,6 +501,13 @@ export class DeferredLaunchQueue {
       return;
     }
 
+    const appre = await this.assertOnchainAppreciation(client, item, config);
+    if (!appre.ok) {
+      logLine(`DEFER SKIP ${next.symbol}: ${appre.reason}`);
+      return;
+    }
+    logLine(`DEFER ${next.symbol}: ${appre.reason}`);
+
     const sellable = await checkSellableRoundtrip(client, next, config);
     if (!sellable.ok) {
       logLine(`DEFER SKIP ${next.symbol}: ${sellable.reason}`);
@@ -341,7 +515,7 @@ export class DeferredLaunchQueue {
     }
     logLine(`DEFER ${next.symbol}: ${sellable.reason}`);
 
-    // Real 15m momentum — biggest separator of moon winners vs deferred rugs
+    // DexPaprika: mandatory positive Δ + AND confirmers
     let momReason = "momentum skipped";
     if (config.REQUIRE_LAUNCH_MOMENTUM) {
       const extras = await fetchTokenMomentumExtras(next.token);
@@ -373,7 +547,7 @@ export class DeferredLaunchQueue {
       fee: next.fee,
       score: 0,
       action: "BUY",
-      reasons: `deferred ${waitSec}s (${item.phase}); ${sellable.reason}; ${momReason}; from signal #${item.signalId}`,
+      reasons: `deferred ${waitSec}s (${item.phase}); ${appre.reason}; ${sellable.reason}; ${momReason}; from signal #${item.signalId}`,
       initial_liquidity_eth: next.initialLiquidityEth,
       tx_hash: next.txHash,
       source: next.source,

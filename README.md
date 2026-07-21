@@ -111,43 +111,50 @@ Tuned from closed-trade analysis (prefer boost + mid-liq; avoid late majors):
 | Confirming edge for BUY | `BUY_REQUIRE_CONFIRMING_EDGE=true` — need boost, **launch+liq**, mid-liq, or moderate momentum |
 | Dead-chop blacklist | 2× near-flat max-hold (`CHOP_FLAT_PNL_PCT=5`) → `REENTRY_AFTER_CHOP_MS` (48h) |
 
-### Anti–instant-rug gates (paper + live)
+### Anti–instant-rug + confirm-then-enter (paper + live)
 
-Launches no longer auto-pass. Before BUY:
+**Strategy shift:** do not buy because a launch “survived” a timer. Buy only after
+**confirmed strength** — on-chain mid price up during the defer window **and**
+DexPaprika **positive** 15m Δ (vol/buys only as AND confirmers). The old OR-gate
+let dump volume pass (e.g. MEOW Δ=−37% with high sells).
 
 | Gate | Default |
 |------|---------|
 | Reject unknown liq | `REJECT_NULL_LIQUIDITY=true` |
 | Min launch WETH | `MIN_LAUNCH_LIQUIDITY_ETH=0.5` |
 | Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS` (optional short) |
-| **Min age before BUY** | `MIN_LAUNCH_AGE_MS=120000` (2m) — non-blocking defer; mid-wait probes every `LAUNCH_LIQ_PROBE_MS` abort on LP pull |
-| **Confirm window** | `LAUNCH_CONFIRM_MS=90000` — after age ok, wait again + re-check (catches delayed rugs that look fine at 2m) |
-| **Launch momentum** | `REQUIRE_LAUNCH_MOMENTUM=true` — need 15m Δ≥25% **or** vol≥2 ETH **or** buys≥15 (DexPaprika); plus `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH=6` |
+| **Min age before BUY** | `MIN_LAUNCH_AGE_MS=120000` (2m) — non-blocking defer; mid-wait probes every `LAUNCH_LIQ_PROBE_MS` abort on LP pull / price dump |
+| **Confirm window** | `LAUNCH_CONFIRM_MS=90000` — after age ok, wait again + re-check |
+| **On-chain appreciation** | `REQUIRE_ONCHAIN_APPRECIATION=true` — mid must rise ≥ `LAUNCH_MIN_APPRECIATION_PCT` (8%) vs first defer quote; abort on `LAUNCH_PRICE_DROP_MAX_PCT` giveback |
+| **Launch momentum** | `REQUIRE_LAUNCH_MOMENTUM=true` — **mandatory** 15m Δ≥25% **and** vol≥2 ETH **and** buys≥15; refuse negative Δ |
+| **Entry liq floor** | `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH=7` |
+| **Launch-only entries** | `ENTRY_LAUNCH_ONLY=true` (paper+live) — skip trending/boost |
 | **Live early LP drain** | `EARLY_RUG_WINDOW_MS` + `EARLY_RUG_LIQ_FRACTION` — emergency sell if pool WETH collapses after entry |
 | Buy→sell quoter roundtrip | `REQUIRE_SELLABLE_QUOTE=true` — fail if unsellable or tax > `MAX_ROUNDTRIP_TAX_BPS` (2500 = 25%) |
 | Live re-check at Yes | same gates run again at execute (LP may vanish during approval TTL) |
 
-Logs: `DEFER BUY …`, `DEFER CONFIRM …`, `DEFER SKIP … momentum weak/missing`, `momentum ok (Δ≥25%|…)`, `EARLY RUG #…`.
+Logs: `DEFER BUY …`, `DEFER CONFIRM …`, `DEFER SKIP … on-chain flat/down`, `momentum dump`, `momentum ok (Δ≥25%+…)`, `EARLY RUG #…`.
 
 Paper skips opens that fail these gates (no synthetic “fake entry” prices). Train in `EXECUTION_MODE=paper` first; promote only after rugs show up as `SKIP` / `gate:` / `DEFER SKIP` in logs instead of opens.
 
-### Overnight live moon-hunt (~$50 / 2 slots)
+### Overnight live moon-hunt (tiny size after paper looks clean)
 
 Still enters as **scout**, then upgrades to **moon** if it runs. For unattended overnight:
 
 | Knob | Suggested |
 |------|-----------|
 | `MAX_OPEN_POSITIONS` / `MAX_MOON_POSITIONS` | **2** / **2** |
-| `MAX_BUY_ETH` | **0.01** (~$18–19) |
-| `MAX_DAILY_ETH` | **0.022** (2 buys; leave gas) |
-| `LIVE_LAUNCH_ONLY` | **true** (noxa/v2/v3 only) |
+| `MAX_BUY_ETH` | **0.001** (~$2) until paper confirms |
+| `MAX_DAILY_ETH` | **0.005** |
+| `ENTRY_LAUNCH_ONLY` | **true** |
 | `TRENDING_ENABLED` | **false** |
 | `AUTO_APPROVE_BUYS` | **true** (no Yes click) |
 | `AUTO_SELL` | **true** (trim/trail/stop on-chain) |
-| `MIN_LAUNCH_LIQUIDITY_ETH` | **1** (paper moons were thicker) |
+| `REQUIRE_ONCHAIN_APPRECIATION` | **true** |
+| `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH` | **7** |
 | `DB_PATH` | separate live DB e.g. `./data/live-overnight.db` |
 
-Flow: launch signal → settle + sellable gates → auto-buy → scout → moon upgrade if +35% early → trim/trail with `AUTO_SELL`.
+Flow: launch → defer+confirm → on-chain up + positive Δ → sellable → auto-buy → scout → moon if +35% early → trim/trail with `AUTO_SELL`.
 
 ### Re-entry guard (stop-loss / chop churn)
 

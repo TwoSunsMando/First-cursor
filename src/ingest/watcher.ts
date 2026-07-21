@@ -128,15 +128,11 @@ export async function handleCandidate(
     working.source === "noxa" ||
     working.source === "uniswap_v2" ||
     working.source === "uniswap_v3";
-  if (
-    action === "BUY" &&
-    mode === "live" &&
-    config.LIVE_LAUNCH_ONLY &&
-    !isLaunchSrc
-  ) {
+  const launchOnly = config.ENTRY_LAUNCH_ONLY || config.LIVE_LAUNCH_ONLY;
+  if (action === "BUY" && launchOnly && !isLaunchSrc) {
     action = "SKIP";
     reasons.push(
-      `live: launch-only mode — skip source=${working.source} (want noxa/v2/v3)`,
+      `launch-only mode — skip source=${working.source} (want noxa/v2/v3; strength-after-launch strategy)`,
     );
   }
 
@@ -201,7 +197,7 @@ export async function handleCandidate(
   }
 
   if (deferLaunch) {
-    deferredLaunchQueue.enqueueLaunch(working, signalId, config);
+    deferredLaunchQueue.enqueueLaunch(working, signalId, config, client);
     return;
   }
 

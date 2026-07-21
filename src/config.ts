@@ -93,8 +93,9 @@ const ConfigSchema = z
     /** Live early-rug detector window after open (ms). 0 = disable. */
     EARLY_RUG_WINDOW_MS: z.coerce.number().int().nonnegative().default(600_000),
     /**
-     * After defer/confirm, require real 15m momentum (DexPaprika) before BUY.
-     * Winners had 15m Δ / vol / buys; bare “survived + sellable” was mostly rugs.
+     * After defer/confirm, require DexPaprika 15m strength before BUY.
+     * Positive price Δ is mandatory; vol/buys are AND confirmers (never OR substitutes).
+     * The old OR-gate let dump volume (MEOW −37% Δ) pass as “momentum”.
      */
     REQUIRE_LAUNCH_MOMENTUM: z
       .string()
@@ -103,17 +104,43 @@ const ConfigSchema = z
         if (v === undefined || v === "") return true;
         return ["1", "true", "yes", "on"].includes(v.toLowerCase());
       }),
-    /** Pass momentum if 15m price change % ≥ this. */
+    /** Mandatory: 15m price change % must be ≥ this (fail closed if missing). */
     LAUNCH_MOMENTUM_MIN_DELTA_PCT: z.coerce.number().nonnegative().default(25),
-    /** Pass momentum if 15m volume (ETH) ≥ this. */
+    /** AND confirmer: 15m volume (ETH) ≥ this. 0 = do not require vol. */
     LAUNCH_MOMENTUM_MIN_VOL_ETH: z.coerce.number().nonnegative().default(2),
-    /** Pass momentum if 15m (or 1h fallback) buys ≥ this. */
+    /** AND confirmer: 15m (or 1h fallback) buys ≥ this. 0 = do not require buys. */
     LAUNCH_MOMENTUM_MIN_BUYS: z.coerce.number().int().nonnegative().default(15),
+    /**
+     * Snapshot mid price at defer enqueue; at BUY require on-chain appreciation
+     * vs that baseline. Catches “LP still there but already dumped / dead”.
+     */
+    REQUIRE_ONCHAIN_APPRECIATION: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    /** Min % mid-price gain from first defer quote → execute. */
+    LAUNCH_MIN_APPRECIATION_PCT: z.coerce.number().nonnegative().default(8),
+    /** Mid-wait abort if mid price drops this % from peak quote. 0 = disable. */
+    LAUNCH_PRICE_DROP_MAX_PCT: z.coerce.number().nonnegative().default(25),
+    /**
+     * Paper + live: only BUY launch sources (noxa / uniswap_v2 / uniswap_v3).
+     * Trending/boost is late chop for this strategy — strength after launch is the edge.
+     */
+    ENTRY_LAUNCH_ONLY: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
     /**
      * Stricter WETH floor at the moment of deferred BUY (after age+confirm).
      * Paper moons clustered ~8–15 ETH; live rugs often ~3–5.5. 0 = use MIN_LAUNCH only.
      */
-    MIN_LAUNCH_ENTRY_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(6),
+    MIN_LAUNCH_ENTRY_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(7),
     /**
      * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
      * Used for score sweet-spot bonus and BUY confirmation.
@@ -241,8 +268,8 @@ const ConfigSchema = z
      */
     AUTO_APPROVE_BUYS: boolFromEnv,
     /**
-     * Live: only BUY launch sources (noxa / uniswap_v2 / uniswap_v3).
-     * Skips trending/boost entries — matches paper moon winners.
+     * Live alias for ENTRY_LAUNCH_ONLY (kept for existing WSL .env).
+     * Prefer ENTRY_LAUNCH_ONLY; either true → launch-only buys.
      */
     LIVE_LAUNCH_ONLY: z
       .string()
