@@ -84,15 +84,19 @@ export async function resolveWethPool(
 export function parseWalletList(raw: string): Address[] {
   const out: Address[] = [];
   const seen = new Set<string>();
-  for (const part of raw.split(/[\s,;]+/)) {
-    const t = part.trim();
-    if (!t || t.startsWith("#")) continue;
-    if (!isAddress(t)) continue;
-    const a = getAddress(t);
-    const key = a.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(a);
+  for (const line of raw.split(/\r?\n/)) {
+    const stripped = line.replace(/#.*$/, "").trim();
+    if (!stripped) continue;
+    for (const part of stripped.split(/[\s,;]+/)) {
+      const t = part.trim();
+      if (!t) continue;
+      if (!isAddress(t)) continue;
+      const a = getAddress(t);
+      const key = a.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(a);
+    }
   }
   return out;
 }
