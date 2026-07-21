@@ -89,7 +89,7 @@ Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool d
 
 Separate ingest path (can run beside confirm-then-enter launches):
 
-1. Put Robinhood Chain wallet addresses in `data/wallets.txt` (one per line) or `WALLET_FOLLOW_ADDRESSES`
+1. Copy `wallets.example.txt` → `data/wallets.txt` and paste Robinhood Chain addresses (one per line), or set `WALLET_FOLLOW_ADDRESSES`
 2. Set `WALLET_FOLLOW_ENABLED=true`
 3. Bot watches ERC20 `Transfer` **to** those wallets, resolves a WETH pool, emits `source=wallet_follow`
 4. Same risk/sellable path as other buys; allowed even when `ENTRY_LAUNCH_ONLY=true` (unless you set `WALLET_FOLLOW_ALLOW_WITH_LAUNCH_ONLY=false`)
