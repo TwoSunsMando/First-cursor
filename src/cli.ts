@@ -19,7 +19,7 @@ function usage() {
 
 Usage:
   npm run ui                   Dashboard (start/stop bot, params, positions)
-  npm run scan                 Start scanner in terminal (paper by default)
+  npm run scan                 Scanner (launches + optional wallet-follow / trending)
   npm run trending             One-shot DexPaprika trending / boost list
   npm run status               Mode, equity, open counts
   npm run report               Paper P&L report

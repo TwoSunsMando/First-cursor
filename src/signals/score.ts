@@ -80,6 +80,11 @@ export function hasConfirmingEdge(
     return { ok: true, reason: "confirming source=boost" };
   }
 
+  // Smart-wallet copy: the followed wallet buying is the edge.
+  if (src === "wallet_follow") {
+    return { ok: true, reason: "confirming source=wallet_follow" };
+  }
+
   // Launch sources must prove real WETH — not a free pass for thin rugs.
   if (src === "noxa" || src === "uniswap_v2" || src === "uniswap_v3") {
     if (liq == null) {
@@ -114,7 +119,7 @@ export function hasConfirmingEdge(
   return {
     ok: false,
     reason:
-      "no confirming edge (need boost, launch+liq, mid-liq 5–50, or moderate 15m momentum)",
+      "no confirming edge (need boost, wallet_follow, launch+liq, mid-liq 5–50, or moderate 15m momentum)",
   };
 }
 
@@ -145,6 +150,9 @@ export function scoreCandidate(
     const noxaPts = noxaLiq >= 1 ? 28 : noxaLiq >= 0.5 ? 22 : 12;
     score += noxaPts;
     reasons.push(`NOXA launch (+${noxaPts}${noxaLiq < 0.5 ? " thin" : ""})`);
+  } else if (candidate.source === "wallet_follow") {
+    score += 22;
+    reasons.push("smart-wallet buy (+22)");
   } else if (candidate.source === "boost") {
     score += 18;
     reasons.push("recent boost (+18)");

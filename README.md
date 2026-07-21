@@ -85,6 +85,27 @@ Trending is intentionally **down-weighted** so it doesn’t crowd out new-pool d
 - Momentum extras (15m vol, buys, 24h vol, Δ) × `TRENDING_MOMENTUM_SCALE` (default **0.55**)
 - At most `MAX_TRENDING_OPEN_POSITIONS` (default **3**) of your open slots may be trending/boost
 
+### Wallet follow / copy-trade signals
+
+Separate ingest path (can run beside confirm-then-enter launches):
+
+1. Put Robinhood Chain wallet addresses in `data/wallets.txt` (one per line) or `WALLET_FOLLOW_ADDRESSES`
+2. Set `WALLET_FOLLOW_ENABLED=true`
+3. Bot watches ERC20 `Transfer` **to** those wallets, resolves a WETH pool, emits `source=wallet_follow`
+4. Same risk/sellable path as other buys; allowed even when `ENTRY_LAUNCH_ONLY=true` (unless you set `WALLET_FOLLOW_ALLOW_WITH_LAUNCH_ONLY=false`)
+
+```bash
+# data/wallets.txt
+0xYourSmartWallet…
+0xAnother…
+
+# .env
+WALLET_FOLLOW_ENABLED=true
+WALLET_FOLLOW_FILE=./data/wallets.txt
+```
+
+Logs: `wallet-follow HIT SYMBOL ← 0xabcd…`. Paper this before live — wallet quality is the whole edge.
+
 ### Moon / runner book (stay past +65%)
 
 Early entry is unchanged — launches still open on the **scout** book with the normal scan.

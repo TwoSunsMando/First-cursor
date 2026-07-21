@@ -104,6 +104,16 @@ export const uniswapV2FactoryAbi = [
       { name: "", type: "uint256", indexed: false },
     ],
   },
+  {
+    type: "function",
+    name: "getPair",
+    stateMutability: "view",
+    inputs: [
+      { name: "tokenA", type: "address" },
+      { name: "tokenB", type: "address" },
+    ],
+    outputs: [{ name: "pair", type: "address" }],
+  },
 ] as const;
 
 export const uniswapV3FactoryAbi = [
@@ -117,6 +127,17 @@ export const uniswapV3FactoryAbi = [
       { name: "tickSpacing", type: "int24", indexed: false },
       { name: "pool", type: "address", indexed: false },
     ],
+  },
+  {
+    type: "function",
+    name: "getPool",
+    stateMutability: "view",
+    inputs: [
+      { name: "tokenA", type: "address" },
+      { name: "tokenB", type: "address" },
+      { name: "fee", type: "uint24" },
+    ],
+    outputs: [{ name: "pool", type: "address" }],
   },
 ] as const;
 

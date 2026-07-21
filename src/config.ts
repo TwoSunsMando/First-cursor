@@ -204,6 +204,37 @@ const ConfigSchema = z
     /** Max open positions that originated from trending/boost (rest reserved for new pools). */
     MAX_TRENDING_OPEN_POSITIONS: z.coerce.number().int().nonnegative().default(3),
     /**
+     * Copy-trade style: watch ERC20 Transfer → listed wallets, emit wallet_follow buys.
+     * Drop addresses in WALLET_FOLLOW_FILE or WALLET_FOLLOW_ADDRESSES. Paper-first.
+     */
+    WALLET_FOLLOW_ENABLED: boolFromEnv,
+    /** Comma/space-separated 0x wallets to follow (buys = Transfer to wallet). */
+    WALLET_FOLLOW_ADDRESSES: z.string().default(""),
+    /** Optional file path (one address per line, # comments ok). Reloaded ~2m. */
+    WALLET_FOLLOW_FILE: z.string().default("./data/wallets.txt"),
+    WALLET_FOLLOW_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    /** Per wallet+token re-emit cooldown. */
+    WALLET_FOLLOW_COOLDOWN_MS: z.coerce.number().int().positive().default(900_000),
+    /** Skip mint Transfers (from=0x0). Usually want true — airdrops ≠ buys. */
+    WALLET_FOLLOW_SKIP_MINTS: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    /**
+     * When ENTRY_LAUNCH_ONLY is on, still allow wallet_follow buys (default true).
+     * Launch-only was meant to block trending chop, not smart-money copies.
+     */
+    WALLET_FOLLOW_ALLOW_WITH_LAUNCH_ONLY: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === undefined || v === "") return true;
+        return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+      }),
+    /**
      * After a stop-loss on a token, block re-entry for this long (paper + live).
      * Stops trending from immediately buying Jimothy/STOCKCAT again.
      */

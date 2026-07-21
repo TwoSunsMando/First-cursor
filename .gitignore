@@ -4,6 +4,7 @@ dist/
 *.db
 *.db-journal
 data/
+!data/wallets.example.txt
 .DS_Store
 *.log
 .vscode/

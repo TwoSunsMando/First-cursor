@@ -9,6 +9,7 @@ import { PaperEngine } from "../paper/engine.js";
 import { LiveGateway } from "../live/gateway.js";
 import { handleCandidate, startIngest } from "../ingest/watcher.js";
 import { startTrendingPoller } from "../ingest/trending.js";
+import { startWalletFollowPoller } from "../ingest/walletFollow.js";
 import { runLearningPass } from "../learning/engine.js";
 import { robinhoodChain } from "../chain/addresses.js";
 import { applyRuntimeOverrides } from "../runtime/configStore.js";
@@ -49,6 +50,7 @@ export class BotRunner {
   private error: string | null = null;
   private stopIngest: (() => void) | null = null;
   private stopTrending: (() => void) | null = null;
+  private stopWalletFollow: (() => void) | null = null;
   private markTimer: ReturnType<typeof setInterval> | null = null;
   private deferTimer: ReturnType<typeof setInterval> | null = null;
   private learnTimer: ReturnType<typeof setInterval> | null = null;
@@ -205,6 +207,13 @@ export class BotRunner {
         live,
         watchClient,
       );
+      this.stopWalletFollow = startWalletFollowPoller(
+        this.config,
+        this.db,
+        paper,
+        live,
+        watchClient,
+      );
 
       this.markTimer = setInterval(async () => {
         try {
@@ -281,11 +290,17 @@ export class BotRunner {
       /* ignore */
     }
     try {
+      this.stopWalletFollow?.();
+    } catch {
+      /* ignore */
+    }
+    try {
       this.stopIngest?.();
     } catch {
       /* ignore */
     }
     this.stopTrending = null;
+    this.stopWalletFollow = null;
     this.stopIngest = null;
     this.live = null;
     // keep paper instance for report reads

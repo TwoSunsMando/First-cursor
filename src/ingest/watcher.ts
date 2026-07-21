@@ -129,10 +129,18 @@ export async function handleCandidate(
     working.source === "uniswap_v2" ||
     working.source === "uniswap_v3";
   const launchOnly = config.ENTRY_LAUNCH_ONLY || config.LIVE_LAUNCH_ONLY;
-  if (action === "BUY" && launchOnly && !isLaunchSrc) {
+  const walletFollowOk =
+    working.source === "wallet_follow" &&
+    config.WALLET_FOLLOW_ENABLED &&
+    config.WALLET_FOLLOW_ALLOW_WITH_LAUNCH_ONLY;
+  if (action === "BUY" && launchOnly && !isLaunchSrc && !walletFollowOk) {
     action = "SKIP";
     reasons.push(
-      `launch-only mode — skip source=${working.source} (want noxa/v2/v3; strength-after-launch strategy)`,
+      `launch-only mode — skip source=${working.source} (want noxa/v2/v3` +
+        (config.WALLET_FOLLOW_ALLOW_WITH_LAUNCH_ONLY
+          ? " or wallet_follow"
+          : "") +
+        `)`,
     );
   }
 
