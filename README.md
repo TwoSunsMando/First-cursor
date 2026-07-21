@@ -146,9 +146,9 @@ let dump volume pass (e.g. MEOW Δ=−37% with high sells).
 | Settle then re-read pool WETH | `LAUNCH_LIQ_SETTLE_MS` (optional short) |
 | **Min age before BUY** | `MIN_LAUNCH_AGE_MS=120000` (2m) — non-blocking defer; mid-wait probes every `LAUNCH_LIQ_PROBE_MS` abort on LP pull / price dump |
 | **Confirm window** | `LAUNCH_CONFIRM_MS=90000` — after age ok, wait again + re-check |
-| **On-chain appreciation** | `REQUIRE_ONCHAIN_APPRECIATION=true` — mid must rise ≥ `LAUNCH_MIN_APPRECIATION_PCT` (8%) vs first defer quote; abort on `LAUNCH_PRICE_DROP_MAX_PCT` giveback |
-| **Launch momentum** | `REQUIRE_LAUNCH_MOMENTUM=true` — **mandatory** 15m Δ≥25% **and** vol≥2 ETH **and** buys≥15; refuse negative Δ |
-| **Entry liq floor** | `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH=7` |
+| **On-chain appreciation** | `REQUIRE_ONCHAIN_APPRECIATION=true` — mid must rise ≥ `LAUNCH_MIN_APPRECIATION_PCT` (3%) vs first defer quote; abort on `LAUNCH_PRICE_DROP_MAX_PCT` giveback |
+| **Launch momentum** | `REQUIRE_LAUNCH_MOMENTUM=true` — **mandatory** positive 15m Δ≥5% (refuse negative); vol/buys optional (default 0 — DexPaprika often empty on fresh RH launches) |
+| **Entry liq floor** | `MIN_LAUNCH_ENTRY_LIQUIDITY_ETH=2.5` (7 silenced paper all day; RH survivors clustered ~2–3 ETH) |
 | **Launch-only entries** | `ENTRY_LAUNCH_ONLY=true` (paper+live) — skip trending/boost |
 | **Live early LP drain** | `EARLY_RUG_WINDOW_MS` + `EARLY_RUG_LIQ_FRACTION` — emergency sell if pool WETH collapses after entry |
 | Buy→sell quoter roundtrip | `REQUIRE_SELLABLE_QUOTE=true` — fail if unsellable or tax > `MAX_ROUNDTRIP_TAX_BPS` (2500 = 25%) |

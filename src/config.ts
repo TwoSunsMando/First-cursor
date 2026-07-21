@@ -104,12 +104,16 @@ const ConfigSchema = z
         if (v === undefined || v === "") return true;
         return ["1", "true", "yes", "on"].includes(v.toLowerCase());
       }),
-    /** Mandatory: 15m price change % must be ≥ this (fail closed if missing). */
-    LAUNCH_MOMENTUM_MIN_DELTA_PCT: z.coerce.number().nonnegative().default(25),
+    /**
+     * Mandatory: 15m price change % must be ≥ this (fail closed if missing).
+     * Paper day showed DexPaprika often lags on fresh launches (9% real moves
+     * with 0 vol) — keep positive-Δ, not a 25% moon bar.
+     */
+    LAUNCH_MOMENTUM_MIN_DELTA_PCT: z.coerce.number().nonnegative().default(5),
     /** AND confirmer: 15m volume (ETH) ≥ this. 0 = do not require vol. */
-    LAUNCH_MOMENTUM_MIN_VOL_ETH: z.coerce.number().nonnegative().default(2),
+    LAUNCH_MOMENTUM_MIN_VOL_ETH: z.coerce.number().nonnegative().default(0),
     /** AND confirmer: 15m (or 1h fallback) buys ≥ this. 0 = do not require buys. */
-    LAUNCH_MOMENTUM_MIN_BUYS: z.coerce.number().int().nonnegative().default(15),
+    LAUNCH_MOMENTUM_MIN_BUYS: z.coerce.number().int().nonnegative().default(0),
     /**
      * Snapshot mid price at defer enqueue; at BUY require on-chain appreciation
      * vs that baseline. Catches “LP still there but already dumped / dead”.
@@ -121,8 +125,8 @@ const ConfigSchema = z
         if (v === undefined || v === "") return true;
         return ["1", "true", "yes", "on"].includes(v.toLowerCase());
       }),
-    /** Min % mid-price gain from first defer quote → execute. */
-    LAUNCH_MIN_APPRECIATION_PCT: z.coerce.number().nonnegative().default(8),
+    /** Min % mid-price gain from first defer quote → execute (flat/dead fail). */
+    LAUNCH_MIN_APPRECIATION_PCT: z.coerce.number().nonnegative().default(3),
     /** Mid-wait abort if mid price drops this % from peak quote. 0 = disable. */
     LAUNCH_PRICE_DROP_MAX_PCT: z.coerce.number().nonnegative().default(25),
     /**
@@ -137,10 +141,10 @@ const ConfigSchema = z
         return ["1", "true", "yes", "on"].includes(v.toLowerCase());
       }),
     /**
-     * Stricter WETH floor at the moment of deferred BUY (after age+confirm).
-     * Paper moons clustered ~8–15 ETH; live rugs often ~3–5.5. 0 = use MIN_LAUNCH only.
+     * WETH floor at deferred BUY. RH launches that survived defer today sat
+     * ~1–3 ETH; 7 ETH zeroed the book. 2.5 filters dust without silence.
      */
-    MIN_LAUNCH_ENTRY_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(7),
+    MIN_LAUNCH_ENTRY_LIQUIDITY_ETH: z.coerce.number().nonnegative().default(2.5),
     /**
      * Overnight edge: mid-liq (~5–50 ETH) outperformed mega-liq majors.
      * Used for score sweet-spot bonus and BUY confirmation.
