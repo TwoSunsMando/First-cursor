@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RH Chain Bot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css?v=6" />
+  </head>
+  <body>
+    <div class="bg"></div>
+    <header class="top">
+      <div class="brand">
+        <span class="brand-mark">RH</span>
+        <div>
+          <h1>Chain Bot</h1>
+          <p class="sub"><span id="modeBadge" class="mode-badge">—</span> <span id="modeLabel">loading…</span></p>
+        </div>
+      </div>
+      <div class="heartbeat" id="heartbeat">
+        <span class="pulse" id="pulse"></span>
+        <div>
+          <strong id="runState">—</strong>
+          <span id="beatAge">no beat</span>
+        </div>
+      </div>
+      <div class="controls">
+        <button type="button" class="btn start" id="btnStart">Start</button>
+        <button type="button" class="btn stop" id="btnStop">Stop</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="strip" id="balanceStrip" aria-label="Balance">
+        <div>
+          <span class="label">Equity (MTM)</span>
+          <strong id="equity">—</strong>
+        </div>
+        <div>
+          <span class="label">Realized PnL</span>
+          <strong id="realized">—</strong>
+        </div>
+        <div>
+          <span class="label">Unrealized</span>
+          <strong id="unrealized">—</strong>
+        </div>
+        <div>
+          <span class="label">Open notional</span>
+          <strong id="notional">—</strong>
+        </div>
+        <div>
+          <span class="label">Record</span>
+          <strong id="record">—</strong>
+        </div>
+      </section>
+
+      <section class="params" aria-label="Trade parameters">
+        <h2>Parameters</h2>
+        <form id="paramForm" class="param-grid">
+          <label>
+            Take profit %
+            <input name="TAKE_PROFIT_PERCENT" type="number" min="1" max="10000" step="1" />
+          </label>
+          <label>
+            Stop loss %
+            <input name="STOP_LOSS_PERCENT" type="number" min="1" max="99" step="1" />
+          </label>
+          <label>
+            Max hold (min)
+            <input name="MAX_HOLD_MINUTES" type="number" min="1" max="10080" step="1" />
+          </label>
+          <label>
+            Max open (1–5)
+            <input name="MAX_OPEN_POSITIONS" type="number" min="1" max="5" step="1" />
+          </label>
+          <button type="submit" class="btn apply">Apply</button>
+          <p class="hint" id="paramHint">Changes apply on the next mark tick.</p>
+        </form>
+      </section>
+
+      <section class="panel" aria-label="Open positions">
+        <div class="panel-head">
+          <h2>Open positions</h2>
+          <span id="posCount">0</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Symbol</th>
+                <th>Book</th>
+                <th>Size</th>
+                <th>PnL</th>
+                <th>Opened</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="posBody">
+              <tr>
+                <td colspan="7" class="empty">No open positions</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Open orders">
+        <div class="panel-head">
+          <h2>Open orders</h2>
+          <span id="orderCount">0</span>
+        </div>
+        <p class="hint muted">Pending live approvals — tap <strong>Yes</strong> to buy or <strong>No</strong> to skip.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Side</th>
+                <th>Symbol</th>
+                <th>Size</th>
+                <th>Notes</th>
+                <th>Expires</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="orderBody">
+              <tr>
+                <td colspan="7" class="empty">No open orders</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span id="updated">—</span>
+    </footer>
+    <div id="errBanner" class="err-banner hidden" role="alert">
+      <div class="err-banner-body">
+        <strong>Error</strong>
+        <pre id="err" class="err-text"></pre>
+      </div>
+      <div class="err-banner-actions">
+        <button type="button" class="btn" id="btnCopyErr">Copy</button>
+        <button type="button" class="btn" id="btnDismissErr">Dismiss</button>
+      </div>
+    </div>
+    <script src="/app.js?v=6"></script>
+  </body>
+</html>

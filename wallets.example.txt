@@ -1,0 +1,5 @@
+# Example wallet list for copy-trade signals.
+# Copy to data/wallets.txt and fill in real Robinhood Chain addresses.
+#
+# 0xYourSmartWalletHere00000000000000000000
+# 0xAnotherWalletHere000000000000000000000
