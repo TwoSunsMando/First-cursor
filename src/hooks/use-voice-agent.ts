@@ -427,6 +427,11 @@ export function useVoiceAgent() {
   }, [setAgentStatus, stopPlayback]);
 
   const connect = useCallback(async () => {
+    if (configured !== true) {
+      setError("Add XAI_API_KEY to .env.local before starting a conversation.");
+      return;
+    }
+
     setError(null);
     setTranscript([]);
     setAgentStatus("connecting");
@@ -489,7 +494,7 @@ export function useVoiceAgent() {
       setAgentStatus("error");
       disconnect();
     }
-  }, [disconnect, handleEvent, sendEvent, setAgentStatus, startCapture, voice]);
+  }, [configured, disconnect, handleEvent, sendEvent, setAgentStatus, startCapture, voice]);
 
   useEffect(() => {
     return () => {

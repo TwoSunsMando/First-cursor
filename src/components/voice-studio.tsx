@@ -86,8 +86,8 @@ export function VoiceStudio() {
               <button
                 type="button"
                 onClick={connect}
-                disabled={configured === false}
-                className="rounded-full bg-amber-300 px-6 py-3 text-sm font-medium text-zinc-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={configured !== true}
+                className="rounded-full bg-amber-300 px-6 py-3 text-sm font-medium text-zinc-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400 disabled:opacity-100"
               >
                 Start talking
               </button>
